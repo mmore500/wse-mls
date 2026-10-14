@@ -1,0 +1,452 @@
+# Created by https://www.toptal.com/developers/gitignore/api/latex
+# Edit at https://www.toptal.com/developers/gitignore?templates=latex
+
+main.pdf
+paperproject.pdf
+paperproject.pdf
+
+### LaTeX ###
+## Core latex/pdflatex auxiliary files:
+*.aux
+*.lof
+*.log
+*.lot
+*.fls
+*.out
+*.toc
+*.fmt
+*.fot
+*.cb
+*.cb2
+.*.lb
+
+## Intermediate documents:
+*.dvi
+*.xdv
+*-converted-to.*
+# these rules might exclude image files for figures etc.
+# *.ps
+# *.eps
+# *.pdf
+
+## Generated if empty string is given at "Please type another file name for output:"
+.pdf
+
+## Bibliography auxiliary files (bibtex/biblatex/biber):
+*.bbl
+*.bcf
+*.blg
+*-blx.aux
+*-blx.bib
+*.run.xml
+
+## Build tool auxiliary files:
+*.fdb_latexmk
+*.synctex
+*.synctex(busy)
+*.synctex.gz
+*.synctex.gz(busy)
+*.pdfsync
+
+## Build tool directories for auxiliary files
+# latexrun
+latex.out/
+
+## Auxiliary and intermediate files from other packages:
+# algorithms
+*.alg
+*.loa
+
+# achemso
+acs-*.bib
+
+# amsthm
+*.thm
+
+# beamer
+*.nav
+*.pre
+*.snm
+*.vrb
+
+# changes
+*.soc
+
+# comment
+*.cut
+
+# cprotect
+*.cpt
+
+# elsarticle (documentclass of Elsevier journals)
+*.spl
+
+# endnotes
+*.ent
+
+# fixme
+*.lox
+
+# feynmf/feynmp
+*.mf
+*.mp
+*.t[1-9]
+*.t[1-9][0-9]
+*.tfm
+
+#(r)(e)ledmac/(r)(e)ledpar
+*.end
+*.?end
+*.[1-9]
+*.[1-9][0-9]
+*.[1-9][0-9][0-9]
+*.[1-9]R
+*.[1-9][0-9]R
+*.[1-9][0-9][0-9]R
+*.eledsec[1-9]
+*.eledsec[1-9]R
+*.eledsec[1-9][0-9]
+*.eledsec[1-9][0-9]R
+*.eledsec[1-9][0-9][0-9]
+*.eledsec[1-9][0-9][0-9]R
+
+# glossaries
+*.acn
+*.acr
+*.glg
+*.glo
+*.gls
+*.glsdefs
+*.lzo
+*.lzs
+*.slg
+*.slo
+*.sls
+
+# uncomment this for glossaries-extra (will ignore makeindex's style files!)
+# *.ist
+
+# gnuplot
+*.gnuplot
+*.table
+
+# gnuplottex
+*-gnuplottex-*
+
+# gregoriotex
+*.gaux
+*.glog
+*.gtex
+
+# htlatex
+*.4ct
+*.4tc
+*.idv
+*.lg
+*.trc
+*.xref
+
+# hyperref
+*.brf
+
+# knitr
+*-concordance.tex
+# TODO Uncomment the next line if you use knitr and want to ignore its generated tikz files
+# *.tikz
+*-tikzDictionary
+
+# listings
+*.lol
+
+# luatexja-ruby
+*.ltjruby
+
+# makeidx
+*.idx
+*.ilg
+*.ind
+
+# minitoc
+*.maf
+*.mlf
+*.mlt
+*.mtc[0-9]*
+*.slf[0-9]*
+*.slt[0-9]*
+*.stc[0-9]*
+
+# minted
+_minted*
+*.pyg
+
+# morewrites
+*.mw
+
+# newpax
+*.newpax
+
+# nomencl
+*.nlg
+*.nlo
+*.nls
+
+# pax
+*.pax
+
+# pdfpcnotes
+*.pdfpc
+
+# sagetex
+*.sagetex.sage
+*.sagetex.py
+*.sagetex.scmd
+
+# scrwfile
+*.wrt
+
+# svg
+svg-inkscape/
+
+# sympy
+*.sout
+*.sympy
+sympy-plots-for-*.tex/
+
+# pdfcomment
+*.upa
+*.upb
+
+# pythontex
+*.pytxcode
+pythontex-files-*/
+
+# tcolorbox
+*.listing
+
+# thmtools
+*.loe
+
+# TikZ & PGF
+*.dpth
+*.md5
+*.auxlock
+
+# titletoc
+*.ptc
+
+# todonotes
+*.tdo
+
+# vhistory
+*.hst
+*.ver
+
+# easy-todo
+*.lod
+
+# xcolor
+*.xcp
+
+# xmpincl
+*.xmpi
+
+# xindy
+*.xdy
+
+# xypic precompiled matrices and outlines
+*.xyc
+*.xyd
+
+# endfloat
+*.ttt
+*.fff
+
+# Latexian
+TSWLatexianTemp*
+
+## Editors:
+# WinEdt
+*.bak
+*.sav
+
+# Texpad
+.texpadtmp
+
+# LyX
+*.lyx~
+
+# Kile
+*.backup
+
+# gummi
+.*.swp
+
+# KBibTeX
+*~[0-9]*
+
+# TeXnicCenter
+*.tps
+
+# auto folder when using emacs and auctex
+./auto/*
+*.el
+
+# expex forward references with \gathertags
+*-tags.tex
+
+# standalone packages
+*.sta
+
+# Makeindex log files
+*.lpz
+
+# xwatermark package
+*.xwm
+
+# REVTeX puts footnotes in the bibliography by default, unless the nofootinbib
+# option is specified. Footnotes are the stored in a file with suffix Notes.bib.
+# Uncomment the next line to have this generated file ignored.
+#*Notes.bib
+
+### LaTeX Patch ###
+# LIPIcs / OASIcs
+*.vtc
+
+# glossaries
+*.glstex
+
+# End of https://www.toptal.com/developers/gitignore/api/latex
+
+# ==============================================================================
+# Agentic coding tooling
+# ==============================================================================
+# Philosophy: ignore *local / personal / state* files, keep *shared* config
+# (CLAUDE.md, AGENTS.md, .cursor/rules/, .github/copilot-instructions.md, etc.)
+# committed so your team and the agents share the same instructions.
+#
+# Each vendor has a commented-out "whole directory" line. Uncomment it only if
+# your team does NOT commit that tool's shared config.
+
+# --- Anthropic / Claude Code --------------------------------------------------
+CLAUDE.local.md
+.claude/settings.local.json
+.claude/.session*
+.claude/todos/
+.claude/shell-snapshots/
+.claude/statsig/
+# .claude/                      # uncomment to ignore the entire directory
+
+# --- OpenAI Codex CLI ---------------------------------------------------------
+AGENTS.override.md
+.codex/
+# AGENTS.md is the cross-tool standard — keep it committed
+
+# --- Cursor -------------------------------------------------------------------
+.cursor/cache/
+.cursorindexingignore
+# .cursor/                      # keep .cursor/rules/ committed; uncomment to nuke
+
+# --- GitHub Copilot -----------------------------------------------------------
+# No repo-level ignore file; exclusions are configured in GitHub org settings.
+# .github/copilot-instructions.md is meant to be committed.
+
+# --- Cline / Roo Code ---------------------------------------------------------
+.cline/cache/
+.roo/cache/
+# .clinerules and .cline/rules/ are usually committed
+
+# --- Windsurf -----------------------------------------------------------------
+.windsurf/cache/
+# .windsurfrules and .windsurf/rules/ are usually committed
+
+# --- Google Gemini CLI / Code Assist ------------------------------------------
+.gemini/
+# GEMINI.md is usually committed
+# .aiexclude is committed (it's the ignore-list itself)
+
+# --- Amazon Q / Kiro ----------------------------------------------------------
+.amazonq/cache/
+.kiro/cache/
+
+# --- Continue.dev -------------------------------------------------------------
+.continue/
+
+# --- Zed assistant ------------------------------------------------------------
+.zed/
+
+# --- Aider --------------------------------------------------------------------
+.aider*
+!.aider.conf.yml
+!.aiderignore
+.aider.chat.history.md
+.aider.input.history
+.aider.llm.history
+.aider.tags.cache.v*/
+
+# --- Tabnine / Codeium / Supermaven (editor-level, occasional local state) ----
+.tabnine/
+.codeium/
+
+# --- MCP (Model Context Protocol) ---------------------------------------------
+# .mcp.json is often committed, BUT it can hold tokens/secrets — review before
+# committing. Local override below is always ignored:
+.mcp.local.json
+
+# --- Generic agent scratch / logs ---------------------------------------------
+.ai/
+.agent/
+*.agent.log
+
+# ==============================================================================
+# Secrets (agents should never index or commit these)
+# ==============================================================================
+.env
+.env.*
+!.env.example
+!.env.template
+*.pem
+*.key
+*.p12
+secrets/
+
+# ==============================================================================
+# System / OS files
+# ==============================================================================
+
+# --- macOS --------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
+.fseventsd
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+Icon[
+]
+
+# --- Windows ------------------------------------------------------------------
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# --- Linux --------------------------------------------------------------------
+*~
+.directory
+.Trash-*
+.nfs*
+
+# --- Editor / IDE noise -------------------------------------------------------
+*.swp
+*.swo
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
