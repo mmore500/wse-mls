@@ -1,0 +1,14 @@
+[submodule "binder/binder"]
+	path = binder/binder
+	url = https://github.com/mmore500/paperproject.git
+	branch = binder
+	shallow = true
+[submodule "binder/binder-2024-10-20-example.ipynb"]
+	path = binder/binder-2024-10-20-example.ipynb
+	url = https://github.com/mmore500/paperproject.git
+	branch = binder-2024-10-20-example.ipynb
+	shallow = true
+[submodule "tex"]
+	path = tex
+	url = https://github.com/mmore500/paperproject.git
+	branch = tex
