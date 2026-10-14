@@ -1,0 +1,28 @@
+name: Bump Tex Pin
+on:
+  workflow_dispatch:
+jobs:
+  bump-tex-pin:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: fregante/setup-git-user@v1
+      - name: Ensure on paper branch
+        run: |
+          if [ ! -d "tex" ]; then
+            git fetch --depth 1 origin paper
+            git checkout paper --
+          fi
+      - name: Update tex submodule to latest on tex
+        run: |
+          git submodule update --init --depth 1 tex
+          name="$(git config -f .gitmodules --get-regexp '^submodule\..*\.path$' | awk '$2=="tex" {print $1}' | sed 's/^submodule\.//; s/\.path$//')"
+          branch="$(git config -f .gitmodules "submodule.${name}.branch")"
+          git -C tex fetch --depth 1 origin "${branch}"
+          git -C tex checkout --detach FETCH_HEAD
+          git add tex
+          git diff --cached --quiet || git commit -m "bump tex pin"
+      - run: git push origin HEAD

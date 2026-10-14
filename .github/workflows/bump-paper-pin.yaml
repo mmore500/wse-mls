@@ -1,0 +1,22 @@
+name: Bump Paper Pin
+on:
+  workflow_dispatch:
+jobs:
+  bump-paper-pin:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: fregante/setup-git-user@v1
+      - name: Update paper submodule to latest on paper
+        run: |
+          git submodule update --init --depth 1 paper
+          name="$(git config -f .gitmodules --get-regexp '^submodule\..*\.path$' | awk '$2=="paper" {print $1}' | sed 's/^submodule\.//; s/\.path$//')"
+          branch="$(git config -f .gitmodules "submodule.${name}.branch")"
+          git -C paper fetch --depth 1 origin "${branch}"
+          git -C paper checkout --detach FETCH_HEAD
+          git add paper
+          git diff --cached --quiet || git commit -m "bump paper pin"
+      - run: git push origin HEAD
