@@ -105,7 +105,7 @@ frozendict==2.4.7
     # via backstrip
 h11==0.16.0
     # via uvicorn
-hstrat==1.25.0
+hstrat @ git+https://github.com/mmore500/hstrat.git@a5290df158e79d45da05a2d8541b54188e1aa5cb
     # via -r requirements.in
 hurry-filesize==0.9
     # via nbmetalog
@@ -124,6 +124,8 @@ interval-search==0.5.2
     # via
     #   -r requirements.in
     #   hstrat
+iplotx==1.8.0
+    # via -r requirements.in
 ipykernel==7.3.0
     # via ipynbname
 ipynbname==2025.8.0.0
@@ -203,11 +205,12 @@ markupsafe==3.0.4
     # via
     #   jinja2
     #   nbconvert
-matplotlib==3.9.2
+matplotlib==3.10.9
     # via
     #   -r requirements.in
     #   backstrip
     #   hstrat
+    #   iplotx
     #   seaborn
     #   teeplot
 matplotlib-inline==0.2.2
@@ -273,6 +276,7 @@ numpy==2.1.2
     #   fishersrc
     #   formulaic
     #   hstrat
+    #   iplotx
     #   matplotlib
     #   pandas
     #   patsy
@@ -318,6 +322,7 @@ pandas==2.2.3
     #   backstrip
     #   formulaic
     #   hstrat
+    #   iplotx
     #   nbmetalog
     #   pecking
     #   phyloframe

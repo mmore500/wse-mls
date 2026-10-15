@@ -1,12 +1,13 @@
 backstrip==0.2.4
 black==26.10.0
 Deprecated==1.2.13
-hstrat==1.25.0
+hstrat @ git+https://github.com/mmore500/hstrat.git@v1.25.2
 interval_search==0.5.2
+iplotx==1.8.0
 IPython==7.31.1
 isort==5.12.0
 marimo==0.23.2
-matplotlib==3.9.2
+matplotlib==3.10.9
 more_itertools==9.1.0
 nb-clean==2.4.0
 nbqa==1.9.1
