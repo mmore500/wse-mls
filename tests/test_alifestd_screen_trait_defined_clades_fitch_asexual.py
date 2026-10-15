@@ -1,24 +1,25 @@
+"""Regression tests for phyloframe's Fitch MDC screen.
+
+phyloframe < 0.10.3 locked each node's Fitch state set as soon as any child
+was resolved, missing some MDCs and placing others too high. These tests
+check the library against a recursive textbook Fitch implementation.
+"""
+
 import numpy as np
+import pandas as pd
+from phyloframe import legacy as pfl
 import pytest
-
-from pylib import screen_mdcs_fitch
-
-
-def _depths(ancestor_ids):
-    depths = np.zeros(len(ancestor_ids), dtype=int)
-    for i, a in enumerate(ancestor_ids):  # ancestors precede descendants
-        depths[i] = 0 if a == i else depths[a] + 1
-    return depths
 
 
 def _screen(ancestor_ids, absent, present):
-    ancestor_ids = np.asarray(ancestor_ids)
+    phylogeny_df = pd.DataFrame(
+        {"id": np.arange(len(ancestor_ids)), "ancestor_id": ancestor_ids},
+    )
     return np.flatnonzero(
-        screen_mdcs_fitch(
-            ancestor_ids,
-            _depths(ancestor_ids),
-            np.asarray(absent, dtype=bool),
-            np.asarray(present, dtype=bool),
+        pfl.alifestd_screen_trait_defined_clades_fitch_asexual(
+            phylogeny_df,
+            mask_trait_absent=np.asarray(absent, dtype=bool),
+            mask_trait_present=np.asarray(present, dtype=bool),
         )
     ).tolist()
 
