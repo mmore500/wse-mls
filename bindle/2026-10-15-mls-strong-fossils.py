@@ -4,7 +4,6 @@ __generated_with = "0.23.2"
 app = marimo.App(width="full")
 
 with app.setup:
-    import itertools as it
     import pathlib
     import random
     import warnings
@@ -376,6 +375,11 @@ def delimit_screen_mdcs():
     ## Screen Mutation-defined Clades
 
     MDCs are identified for each of the 64 trait sites by Fitch maximum parsimony over tip states (root state assumed absent), as in the reference work's wafer-scale analysis.
+
+    Fitch parsimony scores one gain plus one loss the same as two independent gains, and the screen resolves such ties by placing the gain higher in the tree.
+    An MDC node can therefore subtend leaves that do not carry the mutation, which especially affects frequently-arising mutations, as nearby independent origins merge into one MDC.
+    MDC size is therefore measured as `carriers`, the number of descendant leaves carrying the mutation (i.e., sharing it by common descent), rather than all descendant leaves (`num_leaves`).
+    `carrier_frac` is the carrier fraction among descendant leaves, and `is_terminal` marks MDCs arising on a terminal branch (MDC node is itself a leaf).
     """)
     return
 
@@ -385,32 +389,58 @@ def screen_mdcs(phylo):
     _work = phylo[["id", "ancestor_id"]].copy()
     _is_leaf = phylo["is_leaf"].to_numpy()
     mdc_masks = {}
+    carrier_fracs = {}
     for _site in mo.status.progress_bar(range(NUM_SITES)):
         _has = phylo[f"trait_num{_site}"].fillna(0).to_numpy() != 0
-        mdc_masks[_site] = _work.pipe(
-            pfl.alifestd_screen_trait_defined_clades_fitch_asexual,
+        _masks = dict(
             mutate=True,
             mask_trait_absent=_is_leaf & ~_has,
             mask_trait_present=_is_leaf & _has,
+        )
+        mdc_masks[_site] = _work.pipe(
+            pfl.alifestd_screen_trait_defined_clades_fitch_asexual, **_masks
         ).astype(bool)
-    return (mdc_masks,)
+        carrier_fracs[_site] = _work.pipe(
+            pfl.alifestd_calc_clade_trait_frequency_asexual, **_masks
+        )
+    return carrier_fracs, mdc_masks
 
 
 @app.cell
-def tabulate_mdcs(focal_sites, mdc_masks, phylo):
+def tabulate_mdcs(carrier_fracs, focal_sites, mdc_masks, phylo):
     mdcs = pd.concat(
         [
             phylo.loc[
-                mask, ["id", "origin_time", "num_leaves", "clade_duration"]
-            ].assign(site=site, is_focal=site in focal_sites)
+                mask,
+                [
+                    "id",
+                    "origin_time",
+                    "num_leaves",
+                    "clade_duration",
+                    "is_leaf",
+                ],
+            ].assign(
+                site=site,
+                is_focal=site in focal_sites,
+                carrier_frac=carrier_fracs[site][mask],
+            )
             for site, mask in mdc_masks.items()
         ],
         ignore_index=True,
+    ).rename(columns={"is_leaf": "is_terminal"})
+    mdcs["carriers"] = (
+        (mdcs["carrier_frac"] * mdcs["num_leaves"]).round().astype(int)
     )
     mdcs["mutation"] = np.where(mdcs["is_focal"], "MLS", "Neutral")
-    mdcs.groupby("mutation")[
-        ["num_leaves", "clade_duration", "origin_time"]
-    ].describe().T
+    mdcs.groupby("mutation").agg(
+        num_mdcs=("id", "size"),
+        carriers_mean=("carriers", "mean"),
+        carriers_singleton_frac=("carriers", lambda x: (x == 1).mean()),
+        num_leaves_mean=("num_leaves", "mean"),
+        carrier_frac_mean=("carrier_frac", "mean"),
+        carrier_frac_ge75_frac=("carrier_frac", lambda x: (x >= 0.75).mean()),
+        terminal_frac=("is_terminal", "mean"),
+    ).T
     return (mdcs,)
 
 
@@ -487,60 +517,131 @@ def plot_freq_screen(mdc_counts):
 
 
 @app.cell(hide_code=True)
+def delimit_size_by_time():
+    mo.md("""
+    ## MDC Size by Origin Time
+
+    MDCs arising shortly before sampling are mostly terminal-branch singletons regardless of mutation, so pooled comparisons are dominated by ties.
+    """)
+    return
+
+
+@app.cell
+def tabulate_size_by_time(mdcs):
+    mdcs_by_time = mdcs.assign(
+        origin_time_bin=pd.cut(
+            mdcs["origin_time"], [0, 200, 400, 600, 700, 750, 810]
+        ),
+    )
+    mdcs_by_time.groupby(["origin_time_bin", "mutation"], observed=True).agg(
+        num_mdcs=("id", "size"),
+        carriers_mean=("carriers", "mean"),
+        carriers_singleton_frac=("carriers", lambda x: (x == 1).mean()),
+        terminal_frac=("is_terminal", "mean"),
+    ).unstack()
+    return (mdcs_by_time,)
+
+
+@app.cell
+def plot_size_by_time(mdcs_by_time):
+    with tp.teed(
+        sns.pointplot,
+        data=mdcs_by_time.astype({"origin_time_bin": str}),
+        x="origin_time_bin",
+        y="carriers",
+        order=[str(c) for c in mdcs_by_time["origin_time_bin"].cat.categories],
+        hue="mutation",
+        hue_order=["MLS", "Neutral"],
+        palette=["#6AB81C", "#C5A3FF"],
+        dodge=0.3,
+        teeplot_outexclude=["palette", "hue_order", "dodge", "order"],
+        teeplot_show=True,
+        teeplot_subdir=pathlib.Path(__file__).stem,
+    ) as _ax:
+        _ax.set_xlabel("MDC Origin Time")
+        _ax.set_ylabel("Mean MDC Size (carriers)")
+        _ax.tick_params(axis="x", rotation=30)
+        sns.despine(ax=_ax)
+        _ax.figure.set_size_inches(4, 2.4)
+    return
+
+
+@app.cell(hide_code=True)
 def delimit_size_plot():
     mo.md("""
     ## Raw MDC Size
 
-    Following the reference wafer-scale MDC-size figure: leaf counts of MLS-site MDCs versus pooled neutral-site MDCs.
+    Following the reference wafer-scale MDC-size figure: carrier counts of MLS-site MDCs versus pooled neutral-site MDCs, for all MDCs and for non-terminal MDCs with at least 75% carriers (the reference method's clade-definition threshold).
     Raw sizes are confounded by MDC origin time; see normalized screen below.
     """)
     return
 
 
 @app.cell
-def plot_mdc_size(mdcs):
-    _strip_args = dict(
-        x="mutation",
-        y="num_leaves",
-        hue="mutation",
-        order=["MLS", "Neutral"],
-        hue_order=["MLS", "Neutral"],
-        alpha=0.3,
-        jitter=0.3,
-        legend=False,
-        marker="o",
-        s=3,
-    )
-    _sample = (
-        mdcs.groupby("mutation", group_keys=False)
-        .apply(lambda g: g.sample(n=min(len(g), 3000), random_state=SEED))
-        .reset_index(drop=True)
-    )
-    with tp.teed(
-        sns.stripplot,
-        data=_sample,
-        **_strip_args,
-        palette=["#ACC791", "#C5A3FF"],
-        teeplot_outexclude=["palette", "hue_order", "order", "jitter", "s"],
-        teeplot_show=True,
-        teeplot_subdir=pathlib.Path(__file__).stem,
-    ) as _ax:
-        sns.boxenplot(
-            data=mdcs,
+def define_subsets():
+    subsets = {
+        "all": lambda df: np.ones(len(df), dtype=bool),
+        "inner": lambda df: ~df["is_terminal"].to_numpy(),
+        "inner_f75": lambda df: (
+            ~df["is_terminal"].to_numpy()
+            & (df["carrier_frac"].to_numpy() >= 0.75)
+        ),
+    }
+    return (subsets,)
+
+
+@app.cell
+def plot_mdc_size(mdcs, subsets):
+    for _subset in "all", "inner_f75":
+        _data = mdcs[subsets[_subset](mdcs)]
+        _sample = (
+            _data.groupby("mutation", group_keys=False)
+            .apply(lambda g: g.sample(n=min(len(g), 3000), random_state=SEED))
+            .reset_index(drop=True)
+        )
+        with tp.teed(
+            sns.stripplot,
+            data=_sample,
             x="mutation",
-            y="num_leaves",
+            y="carriers",
             hue="mutation",
             order=["MLS", "Neutral"],
             hue_order=["MLS", "Neutral"],
-            palette=["#D6E5BD", "#DBCDF0"],
+            alpha=0.3,
+            jitter=0.3,
             legend=False,
-            ax=_ax,
-        )
-        _ax.set_yscale("log")
-        _ax.set_xlabel("Mutation")
-        _ax.set_ylabel("MDC Size (leaf count)")
-        sns.despine(ax=_ax)
-        _ax.figure.set_size_inches(1.6, 2.4)
+            marker="o",
+            s=3,
+            palette=["#ACC791", "#C5A3FF"],
+            teeplot_outattrs={"subset": _subset},
+            teeplot_outexclude=[
+                "palette",
+                "hue_order",
+                "order",
+                "jitter",
+                "s",
+            ],
+            teeplot_show=True,
+            teeplot_subdir=pathlib.Path(__file__).stem,
+        ) as _ax:
+            sns.boxenplot(
+                data=_data,
+                x="mutation",
+                y="carriers",
+                hue="mutation",
+                order=["MLS", "Neutral"],
+                hue_order=["MLS", "Neutral"],
+                palette=["#D6E5BD", "#DBCDF0"],
+                legend=False,
+                ax=_ax,
+            )
+            _ax.set_yscale("log")
+            _ax.set_xlabel("Mutation")
+            _ax.set_ylabel("MDC Size (carriers)")
+            _ax.set_title(_subset)
+            sns.despine(ax=_ax)
+            _ax.figure.set_size_inches(1.6, 2.4)
+        plt.close("all")
     return
 
 
@@ -549,58 +650,71 @@ def delimit_fitness_screen():
     mo.md("""
     ## Clade-fitness Screen
 
-    Each MDC's clade size (`num_leaves`) and clade duration are percentile-ranked (mean rank for ties) against comparator MDCs.
-    Comparators are the pooled MDCs of background (neutral) sites, i.e., MDCs for *other* mutations.
+    Each MDC's size (`carriers`, and `num_leaves` for reference) and clade duration are percentile-ranked (mean rank for ties) against comparator MDCs.
+    Comparators are the pooled MDCs of background (neutral) sites, i.e., MDCs for *other* mutations, drawn from the same MDC subset.
     Under the `epochN` normalizations, comparison is restricted to comparators originating within the same `N`-update `origin_time` bin, controlling for recency bias.
     Under the null, mean percentile is 50; MLS predicts mean percentile below 50.
+
+    MDC subsets are `all` MDCs, `inner` (excluding terminal-branch MDCs), and `inner_f75` (non-terminal MDCs with at least 75% carriers).
+    Note that all tips were sampled within one late window, so clade duration mostly reflects clade age rather than time to extinction.
     """)
     return
 
 
 @app.cell
-def calc_normed_stats(mdcs):
+def calc_normed_stats(mdcs, subsets):
     normalizations = {"all": None, "epoch100": 100, "epoch50": 50}
-    stat_cols = ("num_leaves", "clade_duration")
-    normed = mdcs.copy()
-    _comparator = ~normed["is_focal"].to_numpy()
-    for _norm, _binwidth in normalizations.items():
-        _epoch = (
-            np.zeros(len(normed), dtype=int)
-            if _binwidth is None
-            else (normed["origin_time"].to_numpy() // _binwidth).astype(int)
-        )
-        for _stat in stat_cols:
-            _values = normed[_stat].to_numpy().astype(float)
-            _result = np.full(len(normed), np.nan)
-            _num_comparators = np.zeros(len(normed), dtype=int)
-            for _e in np.unique(_epoch):
-                _in_epoch = _epoch == _e
-                _comps = _values[_in_epoch & _comparator]
-                _num_comparators[_in_epoch] = len(_comps)
-                if len(_comps):
-                    # score unique values only, as scipy broadcasts
-                    # values x comparators in memory
-                    _uniq, _inv = np.unique(
-                        _values[_in_epoch], return_inverse=True
-                    )
-                    _result[_in_epoch] = scipy_stats.percentileofscore(
-                        _comps, _uniq, kind="mean"
-                    )[_inv]
-            normed[f"pct_{_norm}-{_stat}"] = _result
-            normed[f"ncomp_{_norm}-{_stat}"] = _num_comparators
-    return normalizations, normed, stat_cols
+    stat_cols = ("carriers", "num_leaves", "clade_duration")
+    _parts = []
+    for _subset, _subset_mask in subsets.items():
+        _data = mdcs[_subset_mask(mdcs)]
+        _comparator = ~_data["is_focal"].to_numpy()
+        for _norm, _binwidth in normalizations.items():
+            _epoch = (
+                np.zeros(len(_data), dtype=int)
+                if _binwidth is None
+                else (_data["origin_time"].to_numpy() // _binwidth).astype(int)
+            )
+            for _stat in stat_cols:
+                _values = _data[_stat].to_numpy().astype(float)
+                _result = np.full(len(_data), np.nan)
+                for _e in np.unique(_epoch):
+                    _in_epoch = _epoch == _e
+                    _comps = _values[_in_epoch & _comparator]
+                    if len(_comps):
+                        # score unique values only, as scipy broadcasts
+                        # values x comparators in memory
+                        _uniq, _inv = np.unique(
+                            _values[_in_epoch], return_inverse=True
+                        )
+                        _result[_in_epoch] = scipy_stats.percentileofscore(
+                            _comps, _uniq, kind="mean"
+                        )[_inv]
+                _parts.append(
+                    _data[["site", "mutation", "is_focal"]].assign(
+                        subset=_subset,
+                        normalization=_norm,
+                        stat=_stat,
+                        percentile=_result,
+                    ),
+                )
+    normed = pd.concat(_parts, ignore_index=True).dropna(subset=["percentile"])
+    return (normed,)
 
 
 @app.cell
-def calc_fitness_screen(normalizations, normed, stat_cols):
+def calc_fitness_screen(normed):
     _rng = np.random.default_rng(SEED)
     _records = []
-    for _norm, _stat in it.product(normalizations, stat_cols):
-        _col = f"pct_{_norm}-{_stat}"
-        _focal = normed.loc[normed["is_focal"], _col].dropna().to_numpy()
-        _background = normed.loc[~normed["is_focal"], _col].dropna()
+    for (_subset, _norm, _stat), _group in normed.groupby(
+        ["subset", "normalization", "stat"], sort=False
+    ):
+        _focal = _group.loc[_group["is_focal"], "percentile"].to_numpy()
+        _background = _group.loc[~_group["is_focal"], "percentile"]
         _site_means = (
-            normed.loc[~normed["is_focal"]].groupby("site")[_col].mean()
+            _group.loc[~_group["is_focal"]]
+            .groupby("site")["percentile"]
+            .mean()
         )
         _boot = scipy_stats.bootstrap(
             (_focal,),
@@ -615,6 +729,7 @@ def calc_fitness_screen(normalizations, normed, stat_cols):
         )
         _records.append(
             {
+                "subset": _subset,
                 "normalization": _norm,
                 "stat": _stat,
                 "n_focal": len(_focal),
@@ -643,19 +758,11 @@ def calc_fitness_screen(normalizations, normed, stat_cols):
 
 @app.cell
 def plot_fitness_screen(normed):
-    _site_means = (
-        normed.melt(
-            id_vars=["site", "mutation"],
-            value_vars=[c for c in normed.columns if c.startswith("pct_")],
-            var_name="measure",
-            value_name="percentile",
-        )
-        .groupby(["site", "mutation", "measure"], as_index=False)["percentile"]
-        .mean()
-    )
-    _site_means[["normalization", "stat"]] = (
-        _site_means["measure"].str.removeprefix("pct_").str.split("-").tolist()
-    )
+    _site_means = normed.groupby(
+        ["subset", "normalization", "stat", "site", "mutation"],
+        as_index=False,
+        sort=False,
+    )["percentile"].mean()
     with tp.teed(
         sns.catplot,
         data=_site_means,
@@ -663,6 +770,7 @@ def plot_fitness_screen(normed):
         y="percentile",
         hue="mutation",
         col="stat",
+        row="subset",
         hue_order=["MLS", "Neutral"],
         palette=["#6AB81C", "#C5A3FF"],
         kind="strip",
@@ -681,22 +789,14 @@ def plot_fitness_screen(normed):
 
 @app.cell
 def plot_fitness_distributions(normed):
-    _long = normed.melt(
-        id_vars=["mutation"],
-        value_vars=[c for c in normed.columns if c.startswith("pct_")],
-        var_name="measure",
-        value_name="percentile",
-    )
-    _long[["normalization", "stat"]] = (
-        _long["measure"].str.removeprefix("pct_").str.split("-").tolist()
-    )
     with tp.teed(
         sns.catplot,
-        data=_long,
+        data=normed,
         x="normalization",
         y="percentile",
         hue="mutation",
         col="stat",
+        row="subset",
         hue_order=["MLS", "Neutral"],
         palette=["#D6E5BD", "#DBCDF0"],
         kind="boxen",
