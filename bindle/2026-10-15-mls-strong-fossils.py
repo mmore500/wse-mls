@@ -71,12 +71,6 @@ def describe_notebook():
     return
 
 
-@app.cell
-def get_teeplot_subdir():
-    teeplot_subdir = pathlib.Path(__file__).stem
-    return (teeplot_subdir,)
-
-
 @app.cell(hide_code=True)
 def delimit_get_data():
     mo.md("""
@@ -259,7 +253,7 @@ def delimit_tree_plots():
 
 
 @app.cell
-def plot_trees(phylo, teeplot_subdir):
+def plot_trees(phylo):
     _roots = phylo.loc[phylo["is_root"], ["id", "num_leaves"]]
     _drawn_root_ids = (
         _roots[_roots["num_leaves"] >= _roots["num_leaves"].median()]
@@ -294,7 +288,8 @@ def plot_trees(phylo, teeplot_subdir):
             layout_start=0.25,
             margins=0,
             teeplot_outattrs={"root_id": _root_id},
-            teeplot_subdir=teeplot_subdir,
+            teeplot_show=True,
+            teeplot_subdir=pathlib.Path(__file__).stem,
         ) as _teed:
             plt.gcf().set_size_inches(6, 6)
 
@@ -468,7 +463,7 @@ def calc_freq_screen(background_sites, focal_sites, mdcs):
 
 
 @app.cell
-def plot_freq_screen(mdc_counts, teeplot_subdir):
+def plot_freq_screen(mdc_counts):
     with tp.teed(
         sns.barplot,
         data=mdc_counts.reset_index(),
@@ -479,7 +474,8 @@ def plot_freq_screen(mdc_counts, teeplot_subdir):
         palette=["#6AB81C", "#C5A3FF"],
         dodge=False,
         teeplot_outexclude=["palette", "hue_order", "dodge"],
-        teeplot_subdir=teeplot_subdir,
+        teeplot_show=True,
+        teeplot_subdir=pathlib.Path(__file__).stem,
     ) as _ax:
         _ax.set_yscale("log")
         _ax.set_xlabel("Genome Site")
@@ -502,7 +498,7 @@ def delimit_size_plot():
 
 
 @app.cell
-def plot_mdc_size(mdcs, teeplot_subdir):
+def plot_mdc_size(mdcs):
     _strip_args = dict(
         x="mutation",
         y="num_leaves",
@@ -526,7 +522,8 @@ def plot_mdc_size(mdcs, teeplot_subdir):
         **_strip_args,
         palette=["#ACC791", "#C5A3FF"],
         teeplot_outexclude=["palette", "hue_order", "order", "jitter", "s"],
-        teeplot_subdir=teeplot_subdir,
+        teeplot_show=True,
+        teeplot_subdir=pathlib.Path(__file__).stem,
     ) as _ax:
         sns.boxenplot(
             data=mdcs,
@@ -645,7 +642,7 @@ def calc_fitness_screen(normalizations, normed, stat_cols):
 
 
 @app.cell
-def plot_fitness_screen(normed, teeplot_subdir):
+def plot_fitness_screen(normed):
     _site_means = (
         normed.melt(
             id_vars=["site", "mutation"],
@@ -674,7 +671,8 @@ def plot_fitness_screen(normed, teeplot_subdir):
         height=2.4,
         aspect=1.2,
         teeplot_outexclude=["palette", "hue_order", "jitter", "s"],
-        teeplot_subdir=teeplot_subdir,
+        teeplot_show=True,
+        teeplot_subdir=pathlib.Path(__file__).stem,
     ) as _g:
         _g.refline(y=50, color="gray", linestyle="--")
         _g.set_axis_labels("Comparator Normalization", "Mean MDC Percentile")
@@ -682,7 +680,7 @@ def plot_fitness_screen(normed, teeplot_subdir):
 
 
 @app.cell
-def plot_fitness_distributions(normed, teeplot_subdir):
+def plot_fitness_distributions(normed):
     _long = normed.melt(
         id_vars=["mutation"],
         value_vars=[c for c in normed.columns if c.startswith("pct_")],
@@ -705,7 +703,8 @@ def plot_fitness_distributions(normed, teeplot_subdir):
         height=2.4,
         aspect=1.2,
         teeplot_outexclude=["palette", "hue_order"],
-        teeplot_subdir=teeplot_subdir,
+        teeplot_show=True,
+        teeplot_subdir=pathlib.Path(__file__).stem,
     ) as _g:
         _g.refline(y=50, color="gray", linestyle="--")
         _g.set_axis_labels("Comparator Normalization", "MDC Percentile")
