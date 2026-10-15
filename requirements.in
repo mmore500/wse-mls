@@ -17,6 +17,7 @@ numpy==2.1.2
 opytional==0.1.0
 pandas==2.2.3
 pecking==0.2.1
+phyloframe==0.10.3
 polars==1.36.1
 pytest==8.3.5
 pyarrow==16.1.0
