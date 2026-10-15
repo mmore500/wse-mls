@@ -22,7 +22,7 @@ with app.setup:
     from teeplot import teeplot as tp
     from watermark import watermark
 
-    from pylib import focal_sites_from_masks, osf_fetch, screen_mdcs_fitch
+    from pylib import focal_sites_from_masks, osf_fetch
 
     warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -207,13 +207,11 @@ def prep_phylogeny(phylo_raw):
         .pipe(pfl.alifestd_mark_leaves, mutate=True)
         .pipe(pfl.alifestd_mark_roots, mutate=True)
         .pipe(pfl.alifestd_mark_root_id, mutate=True)
-        .pipe(pfl.alifestd_mark_node_depth_asexual, mutate=True)
         .pipe(pfl.alifestd_mark_num_leaves_asexual, mutate=True)
         .pipe(pfl.alifestd_mark_clade_duration_asexual, mutate=True)
         .reset_index(drop=True)
     )
     assert (phylo["is_leaf"] == phylo["extant"]).all()
-    assert (phylo["id"].to_numpy() == np.arange(len(phylo))).all()
     return (phylo,)
 
 
@@ -378,9 +376,8 @@ def delimit_screen_mdcs():
 
     MDCs are identified for each of the 64 trait sites by Fitch maximum parsimony over tip states (root state assumed absent), as in the reference work's wafer-scale analysis.
 
-    The screen uses `pylib.screen_mdcs_fitch` rather than `alifestd_screen_trait_defined_clades_fitch_asexual` (phyloframe 0.10.1 / hstrat 1.25.2).
-    The library's bottom-up pass fixes each node's state as soon as any child is resolved, before deeper children are, which misses some MDCs and places others too high (subtending non-carrier leaves).
-    `screen_mdcs_fitch` resolves nodes one depth level at a time, deepest first, and is tested against a recursive textbook Fitch implementation.
+    The screen uses phyloframe's `alifestd_screen_trait_defined_clades_fitch_asexual`, which requires phyloframe >= 0.10.3.
+    Earlier versions fixed each node's state as soon as any child was resolved, before deeper children were, which missed some MDCs and placed others too high (subtending non-carrier leaves).
 
     MDC size is measured as `carriers`, the number of descendant leaves carrying the mutation (i.e., sharing it by common descent); `num_leaves` counts all descendant leaves.
     `carrier_frac` is the carrier fraction among descendant leaves, and `is_terminal` marks MDCs arising on a terminal branch (MDC node is itself a leaf).
@@ -391,8 +388,6 @@ def delimit_screen_mdcs():
 @app.cell
 def screen_mdcs(phylo):
     _work = phylo[["id", "ancestor_id"]].copy()
-    _ancestor_ids = phylo["ancestor_id"].to_numpy()
-    _node_depths = phylo["node_depth"].to_numpy()
     _is_leaf = phylo["is_leaf"].to_numpy()
     mdc_masks = {}
     carrier_fracs = {}
@@ -403,12 +398,9 @@ def screen_mdcs(phylo):
             mask_trait_absent=_is_leaf & ~_has,
             mask_trait_present=_is_leaf & _has,
         )
-        mdc_masks[_site] = screen_mdcs_fitch(
-            _ancestor_ids,
-            _node_depths,
-            mask_trait_absent=_masks["mask_trait_absent"],
-            mask_trait_present=_masks["mask_trait_present"],
-        )
+        mdc_masks[_site] = _work.pipe(
+            pfl.alifestd_screen_trait_defined_clades_fitch_asexual, **_masks
+        ).astype(bool)
         carrier_fracs[_site] = _work.pipe(
             pfl.alifestd_calc_clade_trait_frequency_asexual, **_masks
         )
