@@ -350,7 +350,7 @@ def plot_trees(phylo, teeplot_subdir):
                             fillstyle="none",
                         )
 
-            plt.gca().margins(x=-0.1, y=-0.05)
+            plt.gca().margins(x=0.02, y=0.02)
 
             (_h0,) = plt.plot(
                 [], [], "d", markersize=0, color="#FFFFFF", label="Mutation | "
@@ -424,8 +424,8 @@ def delimit_freq_screen():
     mo.md("""
     ## Mutation-frequency Screen
 
-    Baseline rate $\\lambda$ is the mean MDC count per background site.
-    Focal-site significance is the Poisson survival probability of observing at least the focal MDC count under $\\mathsf{Pois}(\\lambda)$.
+    Baseline rate $\lambda$ is the mean MDC count per background site.
+    Focal-site significance is the Poisson survival probability of observing at least the focal MDC count under $\mathsf{Pois}(\lambda)$.
     """)
     return
 
