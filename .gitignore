@@ -31,7 +31,6 @@ coverage_include/
 .ruff_cache/
 __pycache__/
 __marimo__/
-teeplots/
 
 uv.lock
 
