@@ -81,7 +81,7 @@ distutils-strtobool==0.1.0
     # via teeplot
 docutils==0.23
     # via marimo
-downstream==1.23.0
+downstream==1.23.1
     # via hstrat
 ete3==3.1.3
     # via alifedata-phyloinformatics-convert
@@ -157,7 +157,7 @@ joblib==1.6.0
     #   hstrat
     #   phyloframe
     #   scikit-learn
-joinem==0.13.1
+joinem==0.15.0
     # via
     #   downstream
     #   hstrat
@@ -342,8 +342,10 @@ pecking==0.2.1
     # via -r requirements.in
 pexpect==4.9.0
     # via ipython
-phyloframe==0.10.1
-    # via hstrat
+phyloframe==0.10.3
+    # via
+    #   -r requirements.in
+    #   hstrat
 pickleshare==0.7.5
     # via ipython
 pillow==12.3.0
@@ -352,7 +354,7 @@ platformdirs==4.12.4
     # via
     #   black
     #   jupyter-core
-pluggy==1.6.0
+pluggy==1.7.0
     # via pytest
 polars==1.36.1
     # via
