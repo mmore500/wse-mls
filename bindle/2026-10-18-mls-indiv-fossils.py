@@ -280,7 +280,8 @@ def build_phylogeny(config_df, data_paths):
         assert (_raw["config"] == _config).all()
         _is_genome = _raw["clade_size"] > 0
         assert (_is_genome == _raw["trait_present"].notna()).all()
-        assert (_is_genome == _raw["subgrid"].notna()).all()
+        # trees were built partitioned by subgrid, so all rows may carry it
+        assert _raw.loc[_is_genome, "subgrid"].notna().all()
         assert (_raw["ancestor_id"] <= _raw["id"]).all()
         _has_child = np.zeros(len(_raw), dtype=bool)
         _has_child[_raw["ancestor_id"]] = True
