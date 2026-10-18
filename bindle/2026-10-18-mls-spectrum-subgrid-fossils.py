@@ -1193,7 +1193,8 @@ def plot_detectability(detectability, mutation_order, pop_size_order):
             _ax.set_ylabel("Subgrid")
             _ax.set_title(_screen)
             _ax.tick_params(axis="x", rotation=30)
-            _ax.figure.set_size_inches(5.5, 2.4)
+            _ax.tick_params(axis="y", rotation=0)
+            _ax.figure.set_size_inches(6, 2.4)
         plt.close("all")
     return
 
