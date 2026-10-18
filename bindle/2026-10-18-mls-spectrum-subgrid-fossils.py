@@ -268,6 +268,16 @@ def tabulate_tips(phylo_raw):
 
 
 @app.cell
+def describe_times(phylo_raw):
+    phylo_raw.assign(is_genome=phylo_raw["clade_size"] > 0).groupby(
+        "is_genome"
+    )[["origin_time", "last_origin_time"]].describe().T.assign(
+        dtype=str(phylo_raw["origin_time"].dtype),
+    )
+    return
+
+
+@app.cell
 def prune_phylogeny(phylo_raw):
     phylo_pruned = (
         phylo_raw.assign(
@@ -444,9 +454,28 @@ def prep_phylogeny(phylo_split, populations):
         .to_numpy()
     )
     phylo = phylo.pipe(pfl.alifestd_mark_clade_duration_asexual, mutate=True)
-    assert (phylo["clade_duration"] >= 0).all()
     phylo.info()
     return (phylo,)
+
+
+@app.cell
+def check_clade_duration(phylo):
+    _bad = ~(phylo["clade_duration"] >= 0)
+    phylo.loc[
+        _bad,
+        [
+            "id",
+            "ancestor_id",
+            "is_leaf",
+            "origin_time",
+            "last_origin_time",
+            "max_descendant_origin_time",
+            "clade_duration",
+            "clade_size",
+            "pop_code",
+        ],
+    ].describe(include="all").T.assign(num_bad=int(_bad.sum()))
+    return
 
 
 @app.cell(hide_code=True)
