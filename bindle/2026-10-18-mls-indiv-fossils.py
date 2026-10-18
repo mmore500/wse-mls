@@ -250,7 +250,12 @@ def load_phylogeny(data_paths):
             )
         )
         _num_rows += len(_df)
-    phylo_raw = pl.concat(_parts).drop("ancestor_offset").to_pandas()
+    # dtypes were shrunk per run, so may differ
+    phylo_raw = (
+        pl.concat(_parts, how="vertical_relaxed")
+        .drop("ancestor_offset")
+        .to_pandas()
+    )
     del _parts, _df
     # some roots lack origin_time; roots can be no later than the run start
     _no_time = phylo_raw["origin_time"].isna()
