@@ -347,7 +347,7 @@ pecking==0.2.1
     # via -r requirements.in
 pexpect==4.9.0
     # via ipython
-phyloframe==0.10.3
+phyloframe @ git+https://github.com/mmore500/phyloframe.git@0d4f58cf4201f785a80038977d6aa196d759608b
     # via
     #   -r requirements.in
     #   hstrat
