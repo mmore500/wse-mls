@@ -23,7 +23,7 @@ with app.setup:
     from teeplot import teeplot as tp
     from watermark import watermark
 
-    from pylib import osf_fetch, percentileofscore_grouped, screen_mdcs_fitch
+    from pylib import osf_fetch, percentileofscore_grouped
 
     warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -217,15 +217,6 @@ def load_phylogeny(data_path):
         .to_pandas()
     )
     del _df
-    # some roots lack origin_time; roots can be no later than the run start
-    _no_time = phylo_raw["origin_time"].isna()
-    assert (
-        phylo_raw.loc[_no_time, "ancestor_id"] == phylo_raw.loc[_no_time, "id"]
-    ).all()
-    phylo_raw["origin_time"] = phylo_raw["origin_time"].fillna(-1)
-    phylo_raw["last_origin_time"] = phylo_raw["last_origin_time"].fillna(
-        phylo_raw["origin_time"]
-    )
     phylo_raw.info()
     return (phylo_raw,)
 
@@ -254,8 +245,7 @@ def delimit_prep_data():
     Minification collapsed each maximal clade of genomes sharing identical traits onto its root, which became a leaf; `clade_size` gives the number of fossil genomes it represents, and `last_origin_time` the latest among them.
     Genome counts below weight leaves by `clade_size`.
 
-    Fossil layer 0 samples the initial population, at `origin_time == -1` before any lineage history accumulated (as in `2026-10-15-mls-strong-fossils`), so these genomes are dropped (collapsed leaves are kept if any member has `last_origin_time >= 0`).
-    Some roots have no `origin_time`; as roots can be no later than the run start, it is set to -1.
+    Fossil genomes with negative `origin_time` (sampled before any lineage history accumulated, as in `2026-10-15-mls-strong-fossils`), if any, are dropped (collapsed leaves are kept if any member has `last_origin_time >= 0`).
     Lineages without retained leaves are pruned and unifurcations collapsed.
     """)
     return
@@ -648,8 +638,6 @@ def delimit_screen_mdcs():
     MDCs are identified for each of the 64 trait sites by Fitch maximum parsimony over leaf states (root state assumed absent), as in `2026-10-15-mls-strong-fossils`.
     Because each population's trees share no nodes with other populations', one screen over the whole forest is equivalent to screening each population separately.
 
-    The screen uses `pylib.screen_mdcs_fitch`, which matches phyloframe's `alifestd_screen_trait_defined_clades_fitch_asexual` (tested node-for-node on random trees) but runs in linear time; phyloframe's level-by-level passes scale with nodes times tree depth, which is prohibitive at this data size.
-
     MDC size is measured as `carriers`, the number of descendant fossil genomes carrying the mutation; `num_genomes` counts all descendant fossil genomes.
     `carrier_frac` is the carrier fraction among descendant genomes, and `is_terminal` marks MDCs arising on a terminal branch to a single genome (MDC node is an uncollapsed leaf).
     `clade_duration` spans from MDC origin to its latest descendant fossil.
@@ -660,7 +648,6 @@ def delimit_screen_mdcs():
 @app.cell
 def screen_mdcs(phylo):
     _work = phylo[["id", "ancestor_id"]].copy()
-    _ancestor_ids = phylo["ancestor_id"].to_numpy()
     _is_leaf = phylo["is_leaf"].to_numpy()
     _clade_size = phylo["clade_size"].fillna(0).to_numpy(dtype=np.int64)
     _trait_present = phylo["trait_present"].to_numpy(dtype=np.uint64)
@@ -668,11 +655,12 @@ def screen_mdcs(phylo):
     mdc_carriers = {}
     for _site in mo.status.progress_bar(range(NUM_SITES)):
         _has = ((_trait_present >> np.uint64(_site)) & np.uint64(1)) != 0
-        _mask = screen_mdcs_fitch(
-            _ancestor_ids,
+        _mask = _work.pipe(
+            pfl.alifestd_screen_trait_defined_clades_fitch_asexual,
+            mutate=True,
             mask_trait_absent=_is_leaf & ~_has,
             mask_trait_present=_is_leaf & _has,
-        )
+        ).astype(bool)
         # passing counts rather than a mask sums carriers over descendants
         _carriers = _work.pipe(
             pfl.alifestd_calc_clade_trait_count_asexual,
