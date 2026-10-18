@@ -193,8 +193,14 @@ def tabulate_effect_sizes(config_df):
                 "config",
                 "tilePopSize",
                 "CEREBRASLIB_MLS_TRANSMISSION_REDUCTION_SCALE",
+                "mls_withinhost_neutral_p",
             ).to_pandas()
         )
+    )
+    # per-generation MLS gain probability relative to neutral flip probability
+    effect_sizes["gain_ratio"] = (
+        effect_sizes["withinhost_gain_p"]
+        / effect_sizes["mls_withinhost_neutral_p"]
     )
     effect_sizes["effect_size"] = (
         effect_sizes["transmission_reduction_p"]
@@ -214,8 +220,19 @@ def tabulate_effect_sizes(config_df):
         .tolist()
     )
     site_effect_sizes = effect_sizes.groupby("site")["effect_size"].first()
+    assert (
+        effect_sizes.groupby("site")["gain_ratio"].agg(np.ptp)
+        < 1e-3 * effect_sizes.groupby("site")["gain_ratio"].min()
+    ).all(), "gain ratios differ across runs"
+    site_gain_ratios = effect_sizes.groupby("site")["gain_ratio"].mean()
     effect_sizes
-    return background_sites, control_sites, focal_sites, site_effect_sizes
+    return (
+        background_sites,
+        control_sites,
+        focal_sites,
+        site_effect_sizes,
+        site_gain_ratios,
+    )
 
 
 @app.cell(hide_code=True)
@@ -942,6 +959,126 @@ def plot_freq_detection(freq_screen, mutation_order, pop_size_order):
 
 
 @app.cell(hide_code=True)
+def delimit_adj_freq_screen():
+    mo.md(r"""
+    ## Rate-adjusted Mutation-frequency Screen
+
+    MDC counts reflect both how often a mutation arises and how often its lineage survives long enough to be sampled.
+    To separate the two, each site's expected MDC count is its population's neutral baseline $\lambda$ scaled by the site's per-generation within-host gain probability relative to the neutral flip probability (`gain_ratio` in the effect size table; 1 for neutral control sites).
+    The observed/expected ratio then estimates the relative chance that a gain persists to be sampled, and a site is detected if it has fewer MDCs than expected (lower-tail Poisson probability below $\alpha$), as expected under a between-host cost.
+
+    The strongest MLS site (effect size 1) is gained almost surely, so it is carried from tree roots and has almost no MDCs; its depletion here reflects root fixation, not between-host selection.
+    """)
+    return
+
+
+@app.cell
+def calc_adj_freq_screen(freq_screen, site_gain_ratios):
+    adj_freq_screen = freq_screen.assign(
+        gain_ratio=np.where(
+            freq_screen["is_control"],
+            1.0,
+            freq_screen["site"].map(site_gain_ratios),
+        ),
+    )
+    adj_freq_screen["expected"] = (
+        adj_freq_screen["lambda"] * adj_freq_screen["gain_ratio"]
+    )
+    adj_freq_screen["observed_over_expected"] = (
+        adj_freq_screen["mdc_count"] / adj_freq_screen["expected"]
+    )
+    adj_freq_screen["poisson_cdf_p"] = np.where(
+        adj_freq_screen["expected"] > 0,
+        scipy_stats.poisson.cdf(
+            adj_freq_screen["mdc_count"], adj_freq_screen["expected"]
+        ),
+        np.nan,
+    )
+    adj_freq_screen["detected"] = adj_freq_screen["poisson_cdf_p"] < ALPHA
+    adj_freq_screen.groupby(["pop_size", "mutation"], sort=False).agg(
+        num_populations=("pop_code", "nunique"),
+        mdc_count_mean=("mdc_count", "mean"),
+        expected_mean=("expected", "mean"),
+        gain_ratio=("gain_ratio", "first"),
+        observed_over_expected_median=("observed_over_expected", "median"),
+        detection_rate=("detected", "mean"),
+    ).unstack("pop_size")
+    return (adj_freq_screen,)
+
+
+@app.cell
+def plot_adj_freq_ratio(adj_freq_screen, mutation_order, pop_size_order):
+    with tp.teed(
+        sns.pointplot,
+        data=adj_freq_screen.replace([np.inf, -np.inf], np.nan),
+        x="mutation",
+        y="observed_over_expected",
+        order=mutation_order,
+        hue="pop_size",
+        hue_order=pop_size_order,
+        palette="viridis",
+        estimator="median",
+        errorbar=("pi", 50),
+        dodge=0.4,
+        teeplot_outexclude=["palette", "hue_order", "dodge", "order"],
+        teeplot_show=True,
+        teeplot_subdir=pathlib.Path(__file__).stem,
+    ) as _ax:
+        _ax.axhline(1, color="gray", linestyle="--", zorder=0)
+        _ax.set_yscale("log")
+        _ax.set_xlabel("Mutation (effect size)")
+        _ax.set_ylabel("MDCs Observed / Expected\n(median, IQR)")
+        _ax.tick_params(axis="x", rotation=30)
+        sns.move_legend(
+            _ax,
+            "upper left",
+            bbox_to_anchor=(1, 1),
+            title="Subgrid",
+            frameon=False,
+        )
+        sns.despine(ax=_ax)
+        _ax.figure.set_size_inches(5, 2.6)
+    return
+
+
+@app.cell
+def plot_adj_freq_detection(adj_freq_screen, mutation_order, pop_size_order):
+    with tp.teed(
+        sns.pointplot,
+        data=adj_freq_screen.astype({"detected": float}),
+        x="mutation",
+        y="detected",
+        order=mutation_order,
+        hue="pop_size",
+        hue_order=pop_size_order,
+        palette="viridis",
+        errorbar=("ci", 95),
+        n_boot=1000,
+        seed=SEED,
+        dodge=0.4,
+        teeplot_outattrs={"screen": "rate-adjusted"},
+        teeplot_outexclude=["palette", "hue_order", "dodge", "order", "seed"],
+        teeplot_show=True,
+        teeplot_subdir=pathlib.Path(__file__).stem,
+    ) as _ax:
+        _ax.axhline(ALPHA, color="gray", linestyle="--", zorder=0)
+        _ax.set_ylim(-0.05, 1.05)
+        _ax.set_xlabel("Mutation (effect size)")
+        _ax.set_ylabel("Detection Rate\n(rate-adjusted depletion)")
+        _ax.tick_params(axis="x", rotation=30)
+        sns.move_legend(
+            _ax,
+            "upper left",
+            bbox_to_anchor=(1, 1),
+            title="Subgrid",
+            frameon=False,
+        )
+        sns.despine(ax=_ax)
+        _ax.figure.set_size_inches(5, 2.6)
+    return
+
+
+@app.cell(hide_code=True)
 def delimit_fitness_screen():
     mo.md("""
     ## Clade-fitness Screen
@@ -1187,9 +1324,10 @@ def delimit_detectability():
 
 
 @app.cell
-def tabulate_detectability(fitness_detection, freq_screen):
+def tabulate_detectability(adj_freq_screen, fitness_detection, freq_screen):
     _screens = {
         "frequency": freq_screen,
+        "rate-adjusted frequency depletion": adj_freq_screen,
         **{
             f"fitness {_stat} {_subset}": fitness_detection[
                 (fitness_detection["normalization"] == "epoch100")
