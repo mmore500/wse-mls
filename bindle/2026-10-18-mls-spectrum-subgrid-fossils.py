@@ -23,7 +23,7 @@ with app.setup:
     from teeplot import teeplot as tp
     from watermark import watermark
 
-    from pylib import osf_fetch, percentileofscore_grouped
+    from pylib import osf_fetch, percentileofscore_grouped, screen_mdcs_fitch
 
     warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -648,6 +648,8 @@ def delimit_screen_mdcs():
     MDCs are identified for each of the 64 trait sites by Fitch maximum parsimony over leaf states (root state assumed absent), as in `2026-10-15-mls-strong-fossils`.
     Because each population's trees share no nodes with other populations', one screen over the whole forest is equivalent to screening each population separately.
 
+    The screen uses `pylib.screen_mdcs_fitch`, which matches phyloframe's `alifestd_screen_trait_defined_clades_fitch_asexual` (tested node-for-node on random trees) but runs in linear time; phyloframe's level-by-level passes scale with nodes times tree depth, which is prohibitive at this data size.
+
     MDC size is measured as `carriers`, the number of descendant fossil genomes carrying the mutation; `num_genomes` counts all descendant fossil genomes.
     `carrier_frac` is the carrier fraction among descendant genomes, and `is_terminal` marks MDCs arising on a terminal branch to a single genome (MDC node is an uncollapsed leaf).
     `clade_duration` spans from MDC origin to its latest descendant fossil.
@@ -658,6 +660,7 @@ def delimit_screen_mdcs():
 @app.cell
 def screen_mdcs(phylo):
     _work = phylo[["id", "ancestor_id"]].copy()
+    _ancestor_ids = phylo["ancestor_id"].to_numpy()
     _is_leaf = phylo["is_leaf"].to_numpy()
     _clade_size = phylo["clade_size"].fillna(0).to_numpy(dtype=np.int64)
     _trait_present = phylo["trait_present"].to_numpy(dtype=np.uint64)
@@ -665,12 +668,11 @@ def screen_mdcs(phylo):
     mdc_carriers = {}
     for _site in mo.status.progress_bar(range(NUM_SITES)):
         _has = ((_trait_present >> np.uint64(_site)) & np.uint64(1)) != 0
-        _mask = _work.pipe(
-            pfl.alifestd_screen_trait_defined_clades_fitch_asexual,
-            mutate=True,
+        _mask = screen_mdcs_fitch(
+            _ancestor_ids,
             mask_trait_absent=_is_leaf & ~_has,
             mask_trait_present=_is_leaf & _has,
-        ).astype(bool)
+        )
         # passing counts rather than a mask sums carriers over descendants
         _carriers = _work.pipe(
             pfl.alifestd_calc_clade_trait_count_asexual,
@@ -1191,7 +1193,8 @@ def plot_detectability(detectability, mutation_order, pop_size_order):
             _ax.set_ylabel("Subgrid")
             _ax.set_title(_screen)
             _ax.tick_params(axis="x", rotation=30)
-            _ax.figure.set_size_inches(5.5, 2.4)
+            _ax.tick_params(axis="y", rotation=0)
+            _ax.figure.set_size_inches(6, 2.4)
         plt.close("all")
     return
 
