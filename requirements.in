@@ -11,7 +11,6 @@ matplotlib==3.10.9
 more_itertools==9.1.0
 nb-clean==2.4.0
 nbqa==1.9.1
-numba==0.61.2
 nbconvert==7.6.0
 nbmetalog==0.2.6
 numpy==2.1.2
