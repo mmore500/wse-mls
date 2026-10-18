@@ -215,77 +215,6 @@ def tabulate_effect_sizes(config_df):
     return background_sites, control_sites, focal_sites, site_effect_sizes
 
 
-@app.cell
-def load_phylogeny(data_paths):
-    _parts = []
-    _num_rows = 0
-    for _path in data_paths.values():
-        _df = pl.read_parquet(
-            _path,
-            columns=[
-                "ancestor_offset",
-                "origin_time",
-                "last_origin_time",
-                "clade_size",
-                "trait_present",
-                "config",
-                "layer",
-                "subgrid",
-            ],
-        )
-        # unminify: rows are in depth-first order, with id = row index
-        # (offset to keep ids unique across runs)
-        _parts.append(
-            _df.with_row_index("id", offset=_num_rows).with_columns(
-                pl.col("id").cast(pl.Int64),
-                ancestor_id=(
-                    pl.col("id").cast(pl.Int64)
-                    - pl.col("ancestor_offset").cast(pl.Int64)
-                ),
-                config=pl.col("config").cast(pl.String),
-                trait_present=pl.col("trait_present").cast(pl.UInt64),
-                subgrid=pl.col("subgrid").cast(pl.UInt32),
-                origin_time=pl.col("origin_time").cast(pl.Int32),
-                last_origin_time=pl.col("last_origin_time").cast(pl.Int32),
-            )
-        )
-        _num_rows += len(_df)
-    # dtypes were shrunk per run, so may differ
-    phylo_raw = (
-        pl.concat(_parts, how="vertical_relaxed")
-        .drop("ancestor_offset")
-        .to_pandas()
-    )
-    del _parts, _df
-    # some roots lack origin_time; roots can be no later than the run start
-    _no_time = phylo_raw["origin_time"].isna()
-    assert (
-        phylo_raw.loc[_no_time, "ancestor_id"] == phylo_raw.loc[_no_time, "id"]
-    ).all()
-    phylo_raw["origin_time"] = phylo_raw["origin_time"].fillna(-1)
-    phylo_raw["last_origin_time"] = phylo_raw["last_origin_time"].fillna(
-        phylo_raw["origin_time"]
-    )
-    phylo_raw.info()
-    return (phylo_raw,)
-
-
-@app.cell
-def check_phylogeny(phylo_raw):
-    _is_genome = phylo_raw["clade_size"] > 0
-    assert (_is_genome == phylo_raw["trait_present"].notna()).all()
-    assert (_is_genome == phylo_raw["subgrid"].notna()).all()
-    assert phylo_raw["config"].notna().all()
-    assert (phylo_raw["ancestor_id"] <= phylo_raw["id"]).all()
-    _has_child = np.zeros(len(phylo_raw), dtype=bool)
-    _has_child[phylo_raw["ancestor_id"]] = True
-    _has_child[phylo_raw["ancestor_id"] == phylo_raw["id"]] = False
-    # collapsed monomorphic clades and fossil genomes are leaves
-    assert not (_has_child & _is_genome).any()
-    "ok"
-    return
-
-
 @app.cell(hide_code=True)
 def delimit_prep_data():
     mo.md("""
@@ -297,215 +226,285 @@ def delimit_prep_data():
     Fossil layer 0 samples the initial population, at `origin_time == -1` before any lineage history accumulated (as in `2026-10-15-mls-strong-fossils`), so these genomes are dropped (collapsed leaves are kept if any member has `last_origin_time >= 0`).
     Some roots have no `origin_time`; as roots can be no later than the run start, it is set to -1.
     Lineages without retained leaves are pruned and unifurcations collapsed.
-    """)
-    return
-
-
-@app.cell
-def tabulate_tips(phylo_raw):
-    _tips = phylo_raw[phylo_raw["clade_size"] > 0]
-    _tips.groupby("config").agg(
-        num_leaves=("id", "size"),
-        num_genomes=("clade_size", "sum"),
-        clade_size_mean=("clade_size", "mean"),
-        clade_size_max=("clade_size", "max"),
-        num_layers=("layer", "nunique"),
-        origin_time_min=("origin_time", "min"),
-        last_origin_time_max=("last_origin_time", "max"),
-        negative_origin_frac=("last_origin_time", lambda x: (x < 0).mean()),
-    ).T
-    return
-
-
-@app.cell
-def describe_times(phylo_raw):
-    phylo_raw.assign(is_genome=phylo_raw["clade_size"] > 0).groupby(
-        "is_genome"
-    )[["origin_time", "last_origin_time"]].describe().T.assign(
-        dtype=str(phylo_raw["origin_time"].dtype),
-    )
-    return
-
-
-@app.cell
-def prune_phylogeny(phylo_raw):
-    phylo_pruned = (
-        phylo_raw.assign(
-            extant=(phylo_raw["clade_size"] > 0)
-            & (phylo_raw["last_origin_time"] >= 0),
-        )
-        .pipe(pfl.alifestd_to_working_format)
-        .pipe(pfl.alifestd_prune_extinct_lineages_asexual, mutate=True)
-        .pipe(pfl.alifestd_collapse_unifurcations, mutate=True)
-        .pipe(pfl.alifestd_to_working_format, mutate=True)
-        .pipe(pfl.alifestd_mark_leaves, mutate=True)
-        .reset_index(drop=True)
-    )
-    assert (phylo_pruned["is_leaf"] == phylo_pruned["extant"]).all()
-    return (phylo_pruned,)
-
-
-@app.cell(hide_code=True)
-def delimit_split_populations():
-    mo.md("""
-    ## Split Populations
 
     Subgrids share no migration, so no true common ancestry links genomes from different subgrids (or runs); each run × subgrid tree was reconstructed independently.
     As a safeguard, nodes whose descendant leaves span more than one population (run × subgrid) are deleted, making each maximal single-population clade a root; none are expected.
     Each population's forest is then analyzed separately.
 
     Edge subgrids are truncated by the grid boundary (e.g., 755 columns is not a multiple of 27), so only full-size subgrids are retained.
+
+    Runs are prepped one at a time, keeping only each run's final phylogeny, to limit memory use.
     """)
     return
 
 
 @app.cell
-def split_populations(config_df, phylo_pruned):
-    _config_codes = {
-        config: i for i, config in enumerate(config_df["config"].to_list())
-    }
-    _is_leaf = phylo_pruned["is_leaf"].to_numpy()
-    _pop_code = np.where(
-        _is_leaf,
-        phylo_pruned["config"].map(_config_codes).to_numpy(dtype=np.int64)
-        * 2**32
-        + phylo_pruned["subgrid"].fillna(0).to_numpy(dtype=np.int64),
-        -1,
-    )
-    _pure = pfl.alifestd_mask_monomorphic_clades_asexual(
-        phylo_pruned[["id", "ancestor_id"]],
-        trait_mask=_is_leaf,
-        trait_values=_pop_code,
-    )["alifestd_mask_monomorphic_clades_asexual"].to_numpy()
-    _ancestor_ids = phylo_pruned["ancestor_id"].to_numpy()
-    _is_root = _ancestor_ids == phylo_pruned["id"].to_numpy()
-    split_summary = pd.Series(
-        {
-            "num_nodes": len(phylo_pruned),
-            "num_multipopulation_nodes": int((~_pure).sum()),
-            "num_roots_before": int(_is_root.sum()),
-            "num_roots_after": int(
-                (_pure & (_is_root | ~_pure[_ancestor_ids])).sum()
-            ),
-        },
-    ).to_frame("value")
-
-    phylo_split = (
-        phylo_pruned.assign(
-            ancestor_id=np.where(
-                _pure[_ancestor_ids], _ancestor_ids, phylo_pruned["id"]
-            ),
-            pop_code=_pop_code,
-        )[_pure]
-        .pipe(pfl.alifestd_to_working_format, mutate=True)
-        .pipe(pfl.alifestd_mark_roots, mutate=True)
-        .pipe(pfl.alifestd_mark_root_id, mutate=True)
-        .reset_index(drop=True)
-    )
-    _root_pops = (
-        phylo_split.loc[phylo_split["is_leaf"]]
-        .groupby("root_id")["pop_code"]
-        .agg(["first", "nunique"])
-    )
-    assert (_root_pops["nunique"] == 1).all()
-    phylo_split["pop_code"] = phylo_split["root_id"].map(_root_pops["first"])
-    assert (phylo_split["pop_code"] >= 0).all()
-    phylo_split["config"] = phylo_split.groupby("pop_code")[
-        "config"
-    ].transform("first")
-    phylo_split["subgrid"] = (phylo_split["pop_code"] % 2**32).astype(int)
-    split_summary
-    return (phylo_split,)
-
-
-@app.cell
-def tabulate_populations(config_df, phylo_split):
-    _config = config_df.select(
-        "config", "nRow", "nCol", "nRowSubgrid", "nColSubgrid", "tilePopSize"
-    ).to_pandas()
-    _leaves = phylo_split[phylo_split["is_leaf"]]
-    populations = (
-        _leaves.groupby("pop_code")
-        .agg(
-            config=("config", "first"),
-            subgrid=("subgrid", "first"),
-            num_leaves=("id", "size"),
-            num_genomes=("clade_size", "sum"),
-            num_roots=("root_id", "nunique"),
+def build_phylogeny(config_df, data_paths):
+    _configs = config_df.to_pandas().set_index("config")
+    _phylo_parts = []
+    _tips_parts = []
+    _times_parts = []
+    _split_parts = []
+    _pop_parts = []
+    _num_rows = 0
+    for _config_code, (_config, _path) in enumerate(
+        mo.status.progress_bar(list(data_paths.items())),
+    ):
+        # unminify: rows are in depth-first order, with id = row index
+        _raw = (
+            pl.read_parquet(
+                _path,
+                columns=[
+                    "ancestor_offset",
+                    "origin_time",
+                    "last_origin_time",
+                    "clade_size",
+                    "trait_present",
+                    "config",
+                    "layer",
+                    "subgrid",
+                ],
+            )
+            .with_row_index("id")
+            .with_columns(
+                pl.col("id").cast(pl.Int64),
+                ancestor_id=(
+                    pl.col("id").cast(pl.Int64)
+                    - pl.col("ancestor_offset").cast(pl.Int64)
+                ),
+                config=pl.col("config").cast(pl.String),
+            )
+            .drop("ancestor_offset")
+            .to_pandas()
         )
-        .reset_index()
-        .merge(_config, on="config")
-    )
-    _has_subgrids = populations["nRowSubgrid"] > 0
-    _nrow_sub = populations["nRowSubgrid"].where(
-        _has_subgrids, populations["nRow"]
-    )
-    _ncol_sub = populations["nColSubgrid"].where(
-        _has_subgrids, populations["nCol"]
-    )
-    _nsub_cols = -(-populations["nCol"] // _ncol_sub)
-    _sub_row = populations["subgrid"] // _nsub_cols
-    _sub_col = populations["subgrid"] % _nsub_cols
-    populations["is_full_size"] = (
-        (_sub_row + 1) * _nrow_sub <= populations["nRow"]
-    ) & ((_sub_col + 1) * _ncol_sub <= populations["nCol"])
-    populations["pop_tiles"] = (_nrow_sub * _ncol_sub).astype(int)
-    populations["pop_size"] = [
-        f"{r}x{c}"
-        for r, c in zip(_nrow_sub.astype(int), _ncol_sub.astype(int))
-    ]
+        assert (_raw["config"] == _config).all()
+        _is_genome = _raw["clade_size"] > 0
+        assert (_is_genome == _raw["trait_present"].notna()).all()
+        assert (_is_genome == _raw["subgrid"].notna()).all()
+        assert (_raw["ancestor_id"] <= _raw["id"]).all()
+        _has_child = np.zeros(len(_raw), dtype=bool)
+        _has_child[_raw["ancestor_id"]] = True
+        _has_child[_raw["ancestor_id"] == _raw["id"]] = False
+        # collapsed monomorphic clades and fossil genomes are leaves
+        assert not (_has_child & _is_genome).any()
+
+        # some roots lack origin_time; roots can be no later than run start
+        _no_time = _raw["origin_time"].isna()
+        assert (
+            _raw.loc[_no_time, "ancestor_id"] == _raw.loc[_no_time, "id"]
+        ).all()
+        _times_parts.append(
+            _raw.assign(is_genome=_is_genome)
+            .groupby("is_genome")[["origin_time", "last_origin_time"]]
+            .describe()
+            .stack(0, future_stack=True)
+            .assign(config=_config, num_missing_origin_time=_no_time.sum()),
+        )
+        _raw["origin_time"] = _raw["origin_time"].fillna(-1)
+        _raw["last_origin_time"] = _raw["last_origin_time"].fillna(
+            _raw["origin_time"]
+        )
+        _tips = _raw[_is_genome]
+        _tips_parts.append(
+            {
+                "config": _config,
+                "num_nodes": len(_raw),
+                "num_leaves": len(_tips),
+                "num_genomes": _tips["clade_size"].sum(),
+                "clade_size_mean": _tips["clade_size"].mean(),
+                "clade_size_max": _tips["clade_size"].max(),
+                "num_layers": _tips["layer"].nunique(),
+                "origin_time_min": _tips["origin_time"].min(),
+                "last_origin_time_max": _tips["last_origin_time"].max(),
+                "negative_origin_frac": (_tips["last_origin_time"] < 0).mean(),
+            },
+        )
+        del _tips
+
+        _pruned = (
+            _raw.drop(columns=["layer"])
+            .assign(extant=_is_genome & (_raw["last_origin_time"] >= 0))
+            .pipe(pfl.alifestd_to_working_format, mutate=True)
+            .pipe(pfl.alifestd_prune_extinct_lineages_asexual, mutate=True)
+            .pipe(pfl.alifestd_collapse_unifurcations, mutate=True)
+            .pipe(pfl.alifestd_to_working_format, mutate=True)
+            .pipe(pfl.alifestd_mark_leaves, mutate=True)
+            .reset_index(drop=True)
+        )
+        del _raw, _is_genome, _has_child, _no_time
+        assert (_pruned["is_leaf"] == _pruned["extant"]).all()
+
+        # split populations, deleting nodes spanning several
+        _is_leaf = _pruned["is_leaf"].to_numpy()
+        _pop_code = np.where(
+            _is_leaf,
+            _config_code * 2**32
+            + _pruned["subgrid"].fillna(0).to_numpy(dtype=np.int64),
+            -1,
+        )
+        _pure = pfl.alifestd_mask_monomorphic_clades_asexual(
+            _pruned[["id", "ancestor_id"]],
+            trait_mask=_is_leaf,
+            trait_values=_pop_code,
+        )["alifestd_mask_monomorphic_clades_asexual"].to_numpy()
+        _ancestor_ids = _pruned["ancestor_id"].to_numpy()
+        _is_root = _ancestor_ids == _pruned["id"].to_numpy()
+        _split_parts.append(
+            {
+                "config": _config,
+                "num_nodes": len(_pruned),
+                "num_multipopulation_nodes": int((~_pure).sum()),
+                "num_roots_before": int(_is_root.sum()),
+                "num_roots_after": int(
+                    (_pure & (_is_root | ~_pure[_ancestor_ids])).sum()
+                ),
+            },
+        )
+        _split = (
+            _pruned.assign(
+                ancestor_id=np.where(
+                    _pure[_ancestor_ids], _ancestor_ids, _pruned["id"]
+                ),
+                pop_code=_pop_code,
+            )[_pure]
+            .pipe(pfl.alifestd_to_working_format, mutate=True)
+            .pipe(pfl.alifestd_mark_roots, mutate=True)
+            .pipe(pfl.alifestd_mark_root_id, mutate=True)
+            .reset_index(drop=True)
+        )
+        del _pruned, _is_leaf, _pop_code, _pure, _ancestor_ids, _is_root
+        _root_pops = (
+            _split.loc[_split["is_leaf"]]
+            .groupby("root_id")["pop_code"]
+            .agg(["first", "nunique"])
+        )
+        assert (_root_pops["nunique"] == 1).all()
+        _split["pop_code"] = _split["root_id"].map(_root_pops["first"])
+        assert (_split["pop_code"] >= 0).all()
+        _split["subgrid"] = (_split["pop_code"] % 2**32).astype(int)
+
+        # population geometry, to retain only full-size subgrids
+        _pops = (
+            _split[_split["is_leaf"]]
+            .groupby("pop_code")
+            .agg(
+                subgrid=("subgrid", "first"),
+                num_leaves=("id", "size"),
+                num_genomes=("clade_size", "sum"),
+                num_roots=("root_id", "nunique"),
+            )
+            .reset_index()
+            .assign(config=_config)
+        )
+        _cfg = _configs.loc[_config]
+        _nrow_sub = _cfg["nRowSubgrid"] or _cfg["nRow"]
+        _ncol_sub = _cfg["nColSubgrid"] or _cfg["nCol"]
+        _nsub_cols = -(-_cfg["nCol"] // _ncol_sub)
+        _pops["is_full_size"] = (
+            (_pops["subgrid"] // _nsub_cols + 1) * _nrow_sub <= _cfg["nRow"]
+        ) & ((_pops["subgrid"] % _nsub_cols + 1) * _ncol_sub <= _cfg["nCol"])
+        _pops["pop_tiles"] = int(_nrow_sub * _ncol_sub)
+        _pops["pop_size"] = f"{_nrow_sub}x{_ncol_sub}"
+        _pops["tile_pop_size"] = _cfg["tilePopSize"]
+        _pop_parts.append(_pops)
+
+        _phylo = (
+            _split[
+                _split["pop_code"].isin(
+                    _pops.loc[_pops["is_full_size"], "pop_code"]
+                )
+            ]
+            .pipe(pfl.alifestd_to_working_format, mutate=True)
+            .pipe(pfl.alifestd_mark_roots, mutate=True)
+            .pipe(pfl.alifestd_mark_root_id, mutate=True)
+            .pipe(pfl.alifestd_mark_num_leaves_asexual, mutate=True)
+            .reset_index(drop=True)
+        )
+        del _split, _root_pops
+        _phylo["trait_present"] = (
+            _phylo["trait_present"].fillna(0).to_numpy(dtype=np.uint64)
+        )
+        _is_leaf = _phylo["is_leaf"].to_numpy()
+        _phylo["num_genomes"] = pfl.alifestd_calc_clade_trait_count_asexual(
+            _phylo[["id", "ancestor_id"]],
+            # passing counts rather than a mask sums genomes over descendants
+            trait_mask=np.where(_is_leaf, _phylo["clade_size"], 0),
+        )
+        # collapsed leaves' clades last until their latest member genome
+        _phylo["max_descendant_origin_time"] = (
+            _phylo[["id", "ancestor_id"]]
+            .assign(
+                origin_time=np.where(
+                    _is_leaf, _phylo["last_origin_time"], _phylo["origin_time"]
+                ),
+            )
+            .pipe(pfl.alifestd_mark_max_descendant_origin_time_asexual)[
+                "max_descendant_origin_time"
+            ]
+            .to_numpy()
+        )
+        _phylo = _phylo.pipe(
+            pfl.alifestd_mark_clade_duration_asexual, mutate=True
+        )
+        # offset ids to keep them unique and contiguous across runs
+        for _col in "id", "ancestor_id", "root_id":
+            _phylo[_col] += _num_rows
+        _num_rows += len(_phylo)
+        _phylo_parts.append(_phylo)
+        del _phylo, _is_leaf
+
+    phylo = pd.concat(_phylo_parts, ignore_index=True)
+    del _phylo_parts
+    assert (phylo["id"] == phylo.index).all()
+    populations = pd.concat(_pop_parts, ignore_index=True)
     pop_size_order = (
         populations.sort_values("pop_tiles")["pop_size"].unique().tolist()
     )
+    tips_summary = pd.DataFrame(_tips_parts).set_index("config")
+    times_summary = pd.concat(_times_parts)
+    split_summary = pd.DataFrame(_split_parts).set_index("config")
+    phylo.info()
+    return (
+        phylo,
+        pop_size_order,
+        populations,
+        split_summary,
+        times_summary,
+        tips_summary,
+    )
+
+
+@app.cell
+def tabulate_tips(tips_summary):
+    tips_summary.T
+    return
+
+
+@app.cell
+def describe_times(times_summary):
+    times_summary
+    return
+
+
+@app.cell
+def tabulate_split(split_summary):
+    split_summary.T
+    return
+
+
+@app.cell
+def tabulate_populations(populations):
     populations.groupby(["pop_size", "is_full_size"], sort=False).agg(
         num_populations=("pop_code", "size"),
         pop_tiles=("pop_tiles", "first"),
-        tile_pop_size=("tilePopSize", "first"),
+        tile_pop_size=("tile_pop_size", "first"),
         num_leaves_median=("num_leaves", "median"),
         num_genomes_median=("num_genomes", "median"),
         num_genomes_min=("num_genomes", "min"),
         num_genomes_max=("num_genomes", "max"),
         num_roots_median=("num_roots", "median"),
     ).T
-    return pop_size_order, populations
-
-
-@app.cell
-def prep_phylogeny(phylo_split, populations):
-    _full_pops = populations.loc[populations["is_full_size"], "pop_code"]
-    phylo = (
-        phylo_split[phylo_split["pop_code"].isin(_full_pops)]
-        .pipe(pfl.alifestd_to_working_format)
-        .pipe(pfl.alifestd_mark_roots, mutate=True)
-        .pipe(pfl.alifestd_mark_root_id, mutate=True)
-        .pipe(pfl.alifestd_mark_num_leaves_asexual, mutate=True)
-        .reset_index(drop=True)
-    )
-    phylo["trait_present"] = (
-        phylo["trait_present"].fillna(0).to_numpy(dtype=np.uint64)
-    )
-    _is_leaf = phylo["is_leaf"].to_numpy()
-    phylo["num_genomes"] = pfl.alifestd_calc_clade_trait_count_asexual(
-        phylo[["id", "ancestor_id"]],
-        # passing counts rather than a mask sums genomes over descendants
-        trait_mask=np.where(_is_leaf, phylo["clade_size"], 0),
-    )
-    # collapsed leaves' clades last until their latest member genome
-    phylo["max_descendant_origin_time"] = (
-        phylo[["id", "ancestor_id"]]
-        .assign(
-            origin_time=np.where(
-                _is_leaf, phylo["last_origin_time"], phylo["origin_time"]
-            ),
-        )
-        .pipe(pfl.alifestd_mark_max_descendant_origin_time_asexual)[
-            "max_descendant_origin_time"
-        ]
-        .to_numpy()
-    )
-    phylo = phylo.pipe(pfl.alifestd_mark_clade_duration_asexual, mutate=True)
-    phylo.info()
-    return (phylo,)
+    return
 
 
 @app.cell
