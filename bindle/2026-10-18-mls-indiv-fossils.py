@@ -397,16 +397,21 @@ def build_phylogeny(config_df, data_paths):
             .reset_index()
             .assign(config=_config)
         )
-        _cfg = _configs.loc[_config]
+        # cast from shrunk dtypes (e.g., UInt8), to avoid overflow
+        _cfg = {
+            key: int(_configs.loc[_config, key])
+            for key in ("nRow", "nCol", "nRowSubgrid", "nColSubgrid")
+        }
         _nrow_sub = _cfg["nRowSubgrid"] or _cfg["nRow"]
         _ncol_sub = _cfg["nColSubgrid"] or _cfg["nCol"]
         _nsub_cols = -(-_cfg["nCol"] // _ncol_sub)
+        _sub = _pops["subgrid"].to_numpy(dtype=np.int64)
         _pops["is_full_size"] = (
-            (_pops["subgrid"] // _nsub_cols + 1) * _nrow_sub <= _cfg["nRow"]
-        ) & ((_pops["subgrid"] % _nsub_cols + 1) * _ncol_sub <= _cfg["nCol"])
+            (_sub // _nsub_cols + 1) * _nrow_sub <= _cfg["nRow"]
+        ) & ((_sub % _nsub_cols + 1) * _ncol_sub <= _cfg["nCol"])
         _pops["pop_tiles"] = int(_nrow_sub * _ncol_sub)
         _pops["pop_size"] = f"{_nrow_sub}x{_ncol_sub}"
-        _pops["tile_pop_size"] = _cfg["tilePopSize"]
+        _pops["tile_pop_size"] = int(_configs.loc[_config, "tilePopSize"])
         _pop_parts.append(_pops)
 
         _phylo = (
@@ -787,13 +792,16 @@ def define_orders(site_effect_sizes):
 
 @app.cell(hide_code=True)
 def delimit_freq_screen():
-    mo.md("""
+    mo.md(r"""
     ## Mutation-frequency Screen
 
     Within each population, baseline rate $\lambda$ is the mean MDC count per background (neutral) site.
     Site significance is the Poisson survival probability of observing at least the site's MDC count under $\mathsf{Pois}(\lambda)$.
     Neutral control sites are screened the same way, against the mean over the other background sites.
     Populations with no background MDCs ($\lambda = 0$) are not screened.
+
+    **Caveat:** in `genome_mlsindiv_2026_10_18`, neutral sites flip at the bitwise mutation rate $2^{-18} \approx 3.8 \times 10^{-6}$ per generation, but MLS sites are gained with the within-host gain probability, which approaches $mT / (1 + mT) \approx 2.5 \times 10^{-5}$ as $s_i \to 0$ (about 6.6-fold higher).
+    So neutral sites are not a mutation-rate-matched baseline here, and MLS-site enrichment below largely reflects mutation supply rather than selection.
     """)
     return
 
@@ -1168,6 +1176,8 @@ def delimit_detectability():
     Fraction of populations in which each screen detects each site at $\\alpha = {ALPHA}$, by population size (rows) and effect size (columns).
     The `Neutral` column gives the false positive rate over neutral control sites, and should sit near {ALPHA}.
     Fitness screens shown use `epoch100` normalization.
+
+    The strongest MLS sites (effect sizes 1 and 0.5) are gained within-host with probability near 1 and 0.35 per generation, so they are carried from the roots of nearly all lineages; with gains at roots not counted, they give rise to almost no MDCs and cannot be screened.
 
     Note that sampled fossil genomes per population grow with subgrid size (fossils were sampled with an equal budget per subgrid), so population size and sample size are confounded here.
     """)
