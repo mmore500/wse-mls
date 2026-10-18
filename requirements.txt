@@ -191,6 +191,8 @@ lazy-loader==0.6
     #   downstream
     #   hstrat
     #   phyloframe
+llvmlite==0.44.0
+    # via numba
 loro==1.16.2
     # via marimo
 lru-dict==1.4.1
@@ -264,6 +266,8 @@ networkx==3.4.2
     # via
     #   alifedata-phyloinformatics-convert
     #   hstrat
+numba==0.61.2
+    # via -r requirements.in
 numpy==2.1.2
     # via
     #   -r requirements.in
@@ -278,6 +282,7 @@ numpy==2.1.2
     #   hstrat
     #   iplotx
     #   matplotlib
+    #   numba
     #   pandas
     #   patsy
     #   pecking
@@ -342,7 +347,7 @@ pecking==0.2.1
     # via -r requirements.in
 pexpect==4.9.0
     # via ipython
-phyloframe==0.10.3
+phyloframe @ git+https://github.com/mmore500/phyloframe.git@0d4f58cf4201f785a80038977d6aa196d759608b
     # via
     #   -r requirements.in
     #   hstrat
