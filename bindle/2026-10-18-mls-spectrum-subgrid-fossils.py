@@ -217,6 +217,15 @@ def load_phylogeny(data_path):
         .to_pandas()
     )
     del _df
+    # some roots lack origin_time; roots can be no later than the run start
+    _no_time = phylo_raw["origin_time"].isna()
+    assert (
+        phylo_raw.loc[_no_time, "ancestor_id"] == phylo_raw.loc[_no_time, "id"]
+    ).all()
+    phylo_raw["origin_time"] = phylo_raw["origin_time"].fillna(-1)
+    phylo_raw["last_origin_time"] = phylo_raw["last_origin_time"].fillna(
+        phylo_raw["origin_time"]
+    )
     phylo_raw.info()
     return (phylo_raw,)
 
@@ -245,7 +254,8 @@ def delimit_prep_data():
     Minification collapsed each maximal clade of genomes sharing identical traits onto its root, which became a leaf; `clade_size` gives the number of fossil genomes it represents, and `last_origin_time` the latest among them.
     Genome counts below weight leaves by `clade_size`.
 
-    Fossil genomes with negative `origin_time` (sampled before any lineage history accumulated, as in `2026-10-15-mls-strong-fossils`), if any, are dropped (collapsed leaves are kept if any member has `last_origin_time >= 0`).
+    Fossil layer 0 samples the initial population, at `origin_time == -1` before any lineage history accumulated (as in `2026-10-15-mls-strong-fossils`), so these genomes are dropped (collapsed leaves are kept if any member has `last_origin_time >= 0`).
+    Some roots have no `origin_time`; as roots can be no later than the run start, it is set to -1.
     Lineages without retained leaves are pruned and unifurcations collapsed.
     """)
     return
