@@ -226,7 +226,10 @@ def load_phylogeny(data_paths):
                     - pl.col("ancestor_offset").cast(pl.Int64)
                 ),
                 config=pl.col("config").cast(pl.String),
-                subgrid=pl.col("subgrid").cast(pl.Int64),
+                # the full-grid run also fills subgrid (0) on inner nodes
+                subgrid=pl.when(pl.col("clade_size") > 0).then(
+                    pl.col("subgrid").cast(pl.Int64)
+                ),
                 trait_present=pl.col("trait_present").cast(pl.Int64),
             )
             .drop("ancestor_offset")
