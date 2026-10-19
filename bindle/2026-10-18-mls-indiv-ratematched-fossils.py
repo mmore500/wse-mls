@@ -23,7 +23,11 @@ with app.setup:
     from teeplot import teeplot as tp
     from watermark import watermark
 
-    from pylib import osf_fetch, percentileofscore_grouped
+    from pylib import (
+        nearest_marked_ancestor,
+        osf_fetch,
+        percentileofscore_grouped,
+    )
 
     warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -283,6 +287,8 @@ def build_phylogeny(config_df, data_paths):
                     "trait_present",
                     "config",
                     "layer",
+                    "row",
+                    "col",
                     "subgrid",
                 ],
             )
@@ -344,8 +350,7 @@ def build_phylogeny(config_df, data_paths):
         del _tips
 
         _pruned = (
-            _raw.drop(columns=["layer"])
-            .assign(extant=_is_genome & (_raw["last_origin_time"] >= 0))
+            _raw.assign(extant=_is_genome & (_raw["last_origin_time"] >= 0))
             .pipe(pfl.alifestd_to_working_format, mutate=True)
             .pipe(pfl.alifestd_prune_extinct_lineages_asexual, mutate=True)
             .pipe(pfl.alifestd_collapse_unifurcations, mutate=True)
@@ -726,11 +731,18 @@ def delimit_screen_mdcs():
 @app.cell
 def screen_mdcs(phylo):
     _work = phylo[["id", "ancestor_id"]].copy()
+    _ancestor_ids = phylo["ancestor_id"].to_numpy()
     _is_leaf = phylo["is_leaf"].to_numpy()
+    # fossil layer and tile of each leaf (first member, for collapsed leaves)
+    _layer = phylo["layer"].fillna(-1).to_numpy(dtype=np.int64)
+    _tile = phylo["row"].fillna(-1).to_numpy(dtype=np.int64) * 2**12 + phylo[
+        "col"
+    ].fillna(-1).to_numpy(dtype=np.int64)
     _clade_size = phylo["clade_size"].fillna(0).to_numpy(dtype=np.int64)
     _trait_present = phylo["trait_present"].to_numpy(dtype=np.uint64)
     mdc_ids = {}
     mdc_carriers = {}
+    mdc_extents = {}
     for _site in mo.status.progress_bar(range(NUM_SITES)):
         _has = ((_trait_present >> np.uint64(_site)) & np.uint64(1)) != 0
         _mask = _work.pipe(
@@ -747,7 +759,28 @@ def screen_mdcs(phylo):
         )
         mdc_ids[_site] = np.flatnonzero(_mask)
         mdc_carriers[_site] = _carriers[_mask]
-    return mdc_carriers, mdc_ids
+        # sampled extent: distinct fossil layers, tiles, and layer x tile
+        # cells among carrier leaves, assigned to their nearest MDC
+        _nearest = nearest_marked_ancestor(_ancestor_ids, _mask)
+        _sel = _is_leaf & _has & (_nearest >= 0)
+        _extent = pd.DataFrame(
+            {
+                "mdc": _nearest[_sel],
+                "layer": _layer[_sel],
+                "tile": _tile[_sel],
+            },
+        )
+        _extent["cell"] = _extent["layer"] * 2**24 + _extent["tile"]
+        mdc_extents[_site] = (
+            _extent.groupby("mdc")
+            .agg(
+                n_layers=("layer", "nunique"),
+                n_tiles=("tile", "nunique"),
+                n_cells=("cell", "nunique"),
+            )
+            .reindex(mdc_ids[_site], fill_value=0)
+        )
+    return mdc_carriers, mdc_extents, mdc_ids
 
 
 @app.cell
@@ -755,6 +788,7 @@ def tabulate_mdcs(
     control_sites,
     focal_sites,
     mdc_carriers,
+    mdc_extents,
     mdc_ids,
     phylo,
     populations,
@@ -776,6 +810,10 @@ def tabulate_mdcs(
                 is_focal=site in focal_sites,
                 is_control=site in control_sites,
                 carriers=mdc_carriers[site],
+                **{
+                    col: mdc_extents[site][col].to_numpy()
+                    for col in ("n_layers", "n_tiles", "n_cells")
+                },
             )
             for site, ids in mdc_ids.items()
         ],
@@ -799,6 +837,9 @@ def tabulate_mdcs(
         carrier_frac_mean=("carrier_frac", "mean"),
         terminal_frac=("is_terminal", "mean"),
         clade_duration_mean=("clade_duration", "mean"),
+        n_layers_mean=("n_layers", "mean"),
+        n_tiles_mean=("n_tiles", "mean"),
+        n_cells_mean=("n_cells", "mean"),
     ).unstack("pop_size")
     return (mdcs,)
 
@@ -1087,77 +1128,124 @@ def delimit_cost_adj_freq_screen():
     The rate-adjusted screen above uses each site's true within-host gain probability, which is not known for empirical data.
     This screen instead estimates, from the tree alone, how a site's between-host cost reduces the chance that a gain is ever sampled, and asks whether the site has more MDCs than its cost would allow if it arose at the neutral rate (i.e., a within-host advantage).
 
-    Model: each gain founds a carrier lineage growing as a subcritical Galton-Watson branching process with geometric offspring, and carriers are sampled sparsely and independently.
-    Then the number of sampled carriers $K$ in a sampled clade (an MDC's `carriers`) follows $P(K = k \mid K \geq 1) \propto \left|\binom{1/2}{k}\right| x^k$, whose maximum likelihood estimate from mean carriers per MDC $\bar{k}$ is $\hat{x} = 1 - (2\bar{k} - 1)^{-2}$.
-    In the sparse sampling limit, the probability that a gain is ever sampled is proportional to $D = (1 - \sqrt{1 - x}) / \sqrt{x} = \sqrt{1 - 1 / \bar{k}}$, so estimated gains are proportional to $M / D$ for MDC count $M$.
+    Estimated gains are proportional to $M / D$, for MDC count $M$ and relative chance $D$ that a gain is ever sampled, which is estimated from each site's MDCs by three methods:
+
+    - **carriers (branching):** each gain founds a carrier lineage growing as a subcritical Galton-Watson branching process with geometric offspring, whose carriers are sampled sparsely and independently.
+      Then sampled carriers $K$ per MDC follow $P(K = k \mid K \geq 1) \propto \left|\binom{1/2}{k}\right| x^k$, with maximum likelihood estimate $\hat{x} = 1 - (2\bar{k} - 1)^{-2}$ from mean $\bar{k}$, and in the sparse sampling limit $D \propto (1 - \sqrt{1 - x}) / \sqrt{x} = \sqrt{1 - 1 / \bar{k}}$.
+    - **sampled cells (branching):** as above, but counting distinct sampled (fossil layer, tile) cells per MDC rather than carriers, so that repeat samples of a lineage from the same place and time are not counted as independent.
+    - **sampled layers (lifetime):** each gain founds a lineage that dies at constant rate $\epsilon$ and is sampled at constant rate $r$, so that it is ever sampled with probability $D = r / (r + \epsilon)$, and, once sampled, is sampled again a geometric number of times with mean $r / \epsilon$.
+      With $\bar{j}$ the mean number of distinct sampled fossil layers per MDC, $D = 1 - 1 / \bar{j}$.
 
     Within each population, a site's expected MDC count under the null of no within-host advantage is the neutral baseline $\lambda$ scaled by $D_\mathrm{site} / D_\mathrm{neutral}$, with $D_\mathrm{neutral}$ from pooled background-site MDCs (other background sites, for neutral control sites).
-    To stabilize small populations, each site's $\bar{k}$ is shrunk toward the neutral $\bar{k}$ with {COST_ADJ_PSEUDOCOUNT} pseudo-MDCs.
+    To stabilize small populations, each site's mean statistic is shrunk toward the neutral mean with a few pseudo-MDCs (`COST_ADJ_PSEUDOCOUNT`).
     A site is detected if it has more MDCs than expected (upper-tail Poisson probability below $\alpha$).
 
     As a validation, estimated gain ratios $(M / D)_\mathrm{site} / (M / D)_\mathrm{neutral}$, pooled over populations of each size, are compared with true within-host gain ratios from run configuration (used only for this comparison).
-    """.replace("{COST_ADJ_PSEUDOCOUNT}", str(COST_ADJ_PSEUDOCOUNT)))
+
+    Caveats: spatial structure (local saturation of susceptible hosts and competition among neighboring strains) and fossil sampling stratified by layer and subgrid violate these models' independence assumptions, especially for long-lived lineages (see diagnostic below); collapsed monomorphic clades contribute only their first member genome's layer and tile.
+    """)
     return
+
+
+@app.cell
+def define_cost_adj_methods():
+    def _sampled_fraction_branching(mean):
+        return np.sqrt(np.clip(1.0 - 1.0 / mean, 0.0, None))
+
+    def _sampled_fraction_lifetime(mean):
+        return np.clip(1.0 - 1.0 / mean, 0.0, None)
+
+    # method name: (per-MDC statistic, relative chance a gain is sampled)
+    cost_adj_methods = {
+        "carriers (branching)": ("carriers", _sampled_fraction_branching),
+        "sampled cells (branching)": ("n_cells", _sampled_fraction_branching),
+        "sampled layers (lifetime)": ("n_layers", _sampled_fraction_lifetime),
+    }
+    return (cost_adj_methods,)
 
 
 @app.cell
 def calc_cost_adj_freq_screen(
     background_sites,
     control_sites,
+    cost_adj_methods,
     focal_sites,
     mdcs,
     populations,
     site_effect_sizes,
 ):
-    def _sampled_fraction(kbar):
-        # relative chance that a gain is ever sampled, given mean sampled
-        # carriers per MDC (sparse-sampling branching-process model)
-        return np.sqrt(np.clip(1.0 - 1.0 / kbar, 0.0, None))
-
     _pops = populations.loc[populations["is_full_size"], "pop_code"]
-    _by_site = (
-        mdcs.groupby(["pop_code", "site"])
-        .agg(mdc_count=("id", "size"), carriers=("carriers", "sum"))
-        .reindex(
-            pd.MultiIndex.from_product(
-                [_pops, range(NUM_SITES)], names=["pop_code", "site"]
-            ),
-            fill_value=0,
-        )
-    )
-    _M = _by_site["mdc_count"].unstack("site")
-    _K = _by_site["carriers"].unstack("site")
+    _mdcs = mdcs[mdcs["pop_code"].isin(_pops)]
     _records = []
-    for _site in [*focal_sites, *control_sites]:
-        _is_control = _site in control_sites
-        _ref = [s for s in background_sites if s != _site]
-        _lam = _M[_ref].mean(axis=1)
-        _kbar_ref = _K[_ref].sum(axis=1) / _M[_ref].sum(axis=1)
-        _kbar = (_K[_site] + COST_ADJ_PSEUDOCOUNT * _kbar_ref) / (
-            _M[_site] + COST_ADJ_PSEUDOCOUNT
+    _validation = []
+    for _method, (_stat, _sampled_fraction) in cost_adj_methods.items():
+        _by_site = (
+            _mdcs.groupby(["pop_code", "site"])
+            .agg(mdc_count=("id", "size"), stat_sum=(_stat, "sum"))
+            .reindex(
+                pd.MultiIndex.from_product(
+                    [_pops, range(NUM_SITES)], names=["pop_code", "site"]
+                ),
+                fill_value=0,
+            )
         )
-        _expected = (
-            _lam * _sampled_fraction(_kbar) / _sampled_fraction(_kbar_ref)
+        _M = _by_site["mdc_count"].unstack("site")
+        _S = _by_site["stat_sum"].unstack("site")
+        for _site in [*focal_sites, *control_sites]:
+            _ref = [s for s in background_sites if s != _site]
+            _lam = _M[_ref].mean(axis=1)
+            _mean_ref = _S[_ref].sum(axis=1) / _M[_ref].sum(axis=1)
+            _mean = (_S[_site] + COST_ADJ_PSEUDOCOUNT * _mean_ref) / (
+                _M[_site] + COST_ADJ_PSEUDOCOUNT
+            )
+            _expected = (
+                _lam * _sampled_fraction(_mean) / _sampled_fraction(_mean_ref)
+            )
+            _records.append(
+                pd.DataFrame(
+                    {
+                        "method": _method,
+                        "pop_code": _M.index,
+                        "site": _site,
+                        "is_control": _site in control_sites,
+                        "mdc_count": _M[_site].to_numpy(),
+                        "lambda": _lam.to_numpy(),
+                        "stat_mean": _mean.to_numpy(),
+                        "stat_mean_neutral": _mean_ref.to_numpy(),
+                        "expected": _expected.to_numpy(),
+                        "poisson_sf_p": np.where(
+                            _expected > 0,
+                            scipy_stats.poisson.sf(_M[_site] - 1, _expected),
+                            np.nan,
+                        ),
+                    },
+                ),
+            )
+
+        # validation: pooled estimated vs true within-host gain ratios
+        _pooled = (
+            _mdcs.groupby(["pop_size", "site"])
+            .agg(mdc_count=("id", "size"), stat_mean=(_stat, "mean"))
+            .reset_index()
         )
-        _records.append(
-            pd.DataFrame(
-                {
-                    "pop_code": _M.index,
-                    "site": _site,
-                    "is_control": _is_control,
-                    "mdc_count": _M[_site].to_numpy(),
-                    "lambda": _lam.to_numpy(),
-                    "kbar": _kbar.to_numpy(),
-                    "kbar_neutral": _kbar_ref.to_numpy(),
-                    "expected": _expected.to_numpy(),
-                    "poisson_sf_p": np.where(
-                        _expected > 0,
-                        scipy_stats.poisson.sf(_M[_site] - 1, _expected),
-                        np.nan,
-                    ),
-                },
-            ),
+        _pooled["est_gains"] = _pooled["mdc_count"] / _sampled_fraction(
+            _pooled["stat_mean"]
         )
+        _neutral = (
+            _pooled[_pooled["site"].isin(background_sites)]
+            .groupby("pop_size")[["mdc_count", "est_gains"]]
+            .mean()
+        )
+        _pooled["raw_ratio"] = _pooled["mdc_count"] / _pooled["pop_size"].map(
+            _neutral["mdc_count"]
+        )
+        _pooled["est_gain_ratio"] = _pooled["est_gains"] / _pooled[
+            "pop_size"
+        ].map(_neutral["est_gains"])
+        _validation.append(
+            _pooled[_pooled["site"].isin(focal_sites)].assign(method=_method)
+        )
+
     cost_adj_freq_screen = pd.concat(_records, ignore_index=True).merge(
         populations[["pop_code", "pop_size", "pop_tiles"]], on="pop_code"
     )
@@ -1174,37 +1262,19 @@ def calc_cost_adj_freq_screen(
     cost_adj_freq_screen["detected"] = (
         cost_adj_freq_screen["poisson_sf_p"] < ALPHA
     )
-
-    # validation: pooled estimated vs true within-host gain ratios
-    _pooled = (
-        mdcs[mdcs["pop_code"].isin(_pops)]
-        .groupby(["pop_size", "site"])
-        .agg(mdc_count=("id", "size"), kbar=("carriers", "mean"))
-        .reset_index()
-    )
-    _pooled["est_gains"] = _pooled["mdc_count"] / _sampled_fraction(
-        _pooled["kbar"]
-    )
-    _neutral = (
-        _pooled[_pooled["site"].isin(background_sites)]
-        .groupby("pop_size")[["mdc_count", "est_gains"]]
-        .mean()
-    )
-    _pooled["raw_ratio"] = _pooled["mdc_count"] / _pooled["pop_size"].map(
-        _neutral["mdc_count"]
-    )
-    _pooled["est_gain_ratio"] = _pooled["est_gains"] / _pooled["pop_size"].map(
-        _neutral["est_gains"]
-    )
-    cost_adj_validation = _pooled[_pooled["site"].isin(focal_sites)]
-    cost_adj_freq_screen.groupby(["pop_size", "mutation"], sort=False).agg(
+    cost_adj_validation = pd.concat(_validation, ignore_index=True)
+    cost_adj_freq_screen.groupby(
+        ["method", "pop_size", "mutation"], sort=False
+    ).agg(
         num_populations=("pop_code", "nunique"),
         mdc_count_mean=("mdc_count", "mean"),
         expected_mean=("expected", "mean"),
-        kbar_median=("kbar", "median"),
+        stat_mean_median=("stat_mean", "median"),
         observed_over_expected_median=("observed_over_expected", "median"),
         detection_rate=("detected", "mean"),
-    ).unstack("pop_size")
+    ).unstack(
+        "pop_size"
+    )
     return cost_adj_freq_screen, cost_adj_validation
 
 
@@ -1219,8 +1289,10 @@ def tabulate_cost_adj_validation(
         true_gain_ratio=cost_adj_validation["site"].map(site_gain_ratios),
     ).pivot_table(
         index=["site", "effect_size", "true_gain_ratio"],
-        columns="pop_size",
-        values=["raw_ratio", "est_gain_ratio"],
+        columns=["method", "pop_size"],
+        values="est_gain_ratio",
+    ).round(
+        3
     )
     return
 
@@ -1236,8 +1308,9 @@ def plot_cost_adj_validation(
         true_gain_ratio=cost_adj_validation["site"].map(site_gain_ratios),
         effect_size=cost_adj_validation["site"].map(site_effect_sizes),
     )
+    _lim = [0.3, _data[["true_gain_ratio", "est_gain_ratio"]].max().max() * 2]
     with tp.teed(
-        sns.scatterplot,
+        sns.relplot,
         data=_data,
         x="true_gain_ratio",
         y="est_gain_ratio",
@@ -1245,26 +1318,22 @@ def plot_cost_adj_validation(
         hue_order=pop_size_order,
         palette="viridis",
         style="effect_size",
+        col="method",
         s=60,
+        height=3,
+        aspect=1,
         teeplot_outexclude=["palette", "hue_order", "s"],
         teeplot_show=True,
         teeplot_subdir=pathlib.Path(__file__).stem,
-    ) as _ax:
-        _ax.set_xscale("log")
-        _ax.set_yscale("log")
-        _lim = [
-            0.3,
-            _data[["true_gain_ratio", "est_gain_ratio"]].max().max() * 2,
-        ]
-        _ax.plot(_lim, _lim, color="gray", linestyle="--", zorder=0)
-        _ax.axhline(1, color="lightgray", linestyle=":", zorder=0)
-        _ax.set_xlabel("True Within-host Gain Ratio")
-        _ax.set_ylabel("Estimated Gain Ratio\n(cost-adjusted, no config)")
-        sns.move_legend(
-            _ax, "upper left", bbox_to_anchor=(1, 1), frameon=False
+    ) as _g:
+        for _ax in _g.axes.flat:
+            _ax.set_xscale("log")
+            _ax.set_yscale("log")
+            _ax.plot(_lim, _lim, color="gray", linestyle="--", zorder=0)
+            _ax.axhline(1, color="lightgray", linestyle=":", zorder=0)
+        _g.set_axis_labels(
+            "True Within-host Gain Ratio", "Estimated Gain Ratio\n(no config)"
         )
-        sns.despine(ax=_ax)
-        _ax.figure.set_size_inches(4, 3.2)
     return
 
 
@@ -1275,7 +1344,7 @@ def plot_cost_adj_freq_detection(
     pop_size_order,
 ):
     with tp.teed(
-        sns.pointplot,
+        sns.catplot,
         data=cost_adj_freq_screen.astype({"detected": float}),
         x="mutation",
         y="detected",
@@ -1283,29 +1352,129 @@ def plot_cost_adj_freq_detection(
         hue="pop_size",
         hue_order=pop_size_order,
         palette="viridis",
+        col="method",
+        kind="point",
         errorbar=("ci", 95),
         n_boot=1000,
         seed=SEED,
         dodge=0.4,
+        height=2.6,
+        aspect=1.4,
         teeplot_outattrs={"screen": "cost-adjusted"},
         teeplot_outexclude=["palette", "hue_order", "dodge", "order", "seed"],
         teeplot_show=True,
         teeplot_subdir=pathlib.Path(__file__).stem,
-    ) as _ax:
-        _ax.axhline(ALPHA, color="gray", linestyle="--", zorder=0)
-        _ax.set_ylim(-0.05, 1.05)
-        _ax.set_xlabel("Mutation (effect size)")
-        _ax.set_ylabel("Detection Rate\n(cost-adjusted excess)")
-        _ax.tick_params(axis="x", rotation=30)
-        sns.move_legend(
-            _ax,
-            "upper left",
-            bbox_to_anchor=(1, 1),
-            title="Subgrid",
-            frameon=False,
+    ) as _g:
+        _g.refline(y=ALPHA, color="gray", linestyle="--")
+        _g.set(ylim=(-0.05, 1.05))
+        _g.set_axis_labels(
+            "Mutation (effect size)", "Detection Rate\n(cost-adjusted excess)"
         )
-        sns.despine(ax=_ax)
-        _ax.figure.set_size_inches(5, 2.6)
+        _g.tick_params(axis="x", rotation=30)
+        _g.legend.set_title("Subgrid")
+    return
+
+
+@app.cell(hide_code=True)
+def delimit_branching_diagnostic():
+    mo.md(r"""
+    ### Diagnostic: Branching-model Fit to Sampled Carriers
+
+    Observed distribution of sampled carriers per MDC $K$, compared with the branching model's zero-truncated distribution $P(K = k \mid K \geq 1) = \left|\binom{1/2}{k}\right| x^k / (1 - \sqrt{1 - x})$ at the fitted $\hat{x}$ (i.e., matching each site's mean $\bar{k}$), pooled over populations of each size.
+    Departures in shape (e.g., fewer singletons, a truncated tail) indicate that sampled carriers do not grow with lineage size as the model assumes, as expected under spatially structured spread and stratified fossil sampling.
+    """)
+    return
+
+
+@app.cell
+def calc_branching_diagnostic(mdcs, populations):
+    from scipy.special import gammaln as _gammaln
+
+    _pops = populations.loc[populations["is_full_size"], "pop_code"]
+    _kmax = 12
+    _k = np.arange(1, _kmax + 1)
+    _records = []
+    for (_pop_size, _mutation), _g in mdcs[
+        mdcs["pop_code"].isin(_pops)
+    ].groupby(["pop_size", "mutation"]):
+        _carriers = _g["carriers"].to_numpy()
+        _kbar = _carriers.mean()
+        if _kbar <= 1:
+            continue
+        _y = 1.0 / (2.0 * _kbar - 1.0)
+        _log_binom = (
+            _gammaln(_k - 0.5) - _gammaln(_k + 1) - np.log(2 * np.sqrt(np.pi))
+        )
+        _model = np.exp(_log_binom + _k * np.log(1.0 - _y**2)) / (1.0 - _y)
+        _observed = np.array(
+            [(_carriers == k).mean() for k in _k[:-1]]
+            + [(_carriers >= _kmax).mean()],
+        )
+        _model[-1] = 1.0 - _model[:-1].sum()
+        for _source, _p in ("observed", _observed), (
+            "branching model",
+            _model,
+        ):
+            _records.append(
+                pd.DataFrame(
+                    {
+                        "pop_size": _pop_size,
+                        "mutation": _mutation,
+                        "kbar": _kbar,
+                        "k": _k,
+                        "source": _source,
+                        "probability": _p,
+                    },
+                ),
+            )
+    branching_diagnostic = pd.concat(_records, ignore_index=True)
+    branching_diagnostic.assign(
+        k_bin=pd.cut(
+            branching_diagnostic["k"],
+            [0, 1, 4, _kmax],
+            labels=["1", "2-4", "5+"],
+        ),
+    ).pivot_table(
+        index=["pop_size", "mutation"],
+        columns=["k_bin", "source"],
+        values="probability",
+        aggfunc="sum",
+        observed=True,
+    ).round(
+        4
+    )
+    return (branching_diagnostic,)
+
+
+@app.cell
+def plot_branching_diagnostic(branching_diagnostic, pop_size_order):
+    _data = branching_diagnostic[
+        branching_diagnostic["mutation"].isin(
+            ["Neutral", "s=0.005", "s=0.01", "s=0.025"]
+        )
+        & (branching_diagnostic["probability"] > 0)
+    ]
+    with tp.teed(
+        sns.relplot,
+        data=_data,
+        x="k",
+        y="probability",
+        hue="mutation",
+        style="source",
+        col="pop_size",
+        col_order=pop_size_order,
+        kind="line",
+        markers=True,
+        height=2.6,
+        aspect=1,
+        teeplot_outexclude=["col_order"],
+        teeplot_show=True,
+        teeplot_subdir=pathlib.Path(__file__).stem,
+    ) as _g:
+        _g.set(yscale="log")
+        _g.set_axis_labels(
+            "Sampled Carriers per MDC (last bin: 12+)", "Probability"
+        )
     return
 
 
@@ -1564,7 +1733,12 @@ def tabulate_detectability(
     _screens = {
         "frequency": freq_screen,
         "rate-adjusted frequency depletion": adj_freq_screen,
-        "cost-adjusted frequency excess": cost_adj_freq_screen,
+        **{
+            f"cost-adjusted frequency excess, {_method}": _df
+            for _method, _df in cost_adj_freq_screen.groupby(
+                "method", sort=False
+            )
+        },
         **{
             f"fitness {_stat} {_subset}": fitness_detection[
                 (fitness_detection["normalization"] == "epoch100")
@@ -1611,7 +1785,9 @@ def plot_detectability(detectability, mutation_order, pop_size_order):
             vmin=0,
             vmax=1,
             cbar_kws={"label": "Detection Rate"},
-            teeplot_outattrs={"screen": _screen.replace(" ", "-")},
+            teeplot_outattrs={
+                "screen": re.sub(r"[^\w]+", "-", _screen).strip("-")
+            },
             teeplot_outexclude=["annot", "fmt", "cmap", "vmin", "vmax"],
             teeplot_show=True,
             teeplot_subdir=pathlib.Path(__file__).stem,
