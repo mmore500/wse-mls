@@ -302,11 +302,15 @@ def tabulate_tips(phylo_raw):
 
 @app.cell
 def tabulate_site_frequencies(focal_sites, phylo_raw, site_effect_sizes):
-    _tips = phylo_raw[
-        (phylo_raw["clade_size"] > 0) & (phylo_raw["last_origin_time"] >= 0)
-    ]
-    _weights = _tips["clade_size"].to_numpy(dtype=float)
-    _present = _tips["trait_present"].to_numpy(dtype=np.uint64)
+    _is_tip = (phylo_raw["clade_size"] > 0) & (
+        phylo_raw["last_origin_time"] >= 0
+    )
+    _codes, _configs = pd.factorize(phylo_raw.loc[_is_tip, "config"])
+    _weights = phylo_raw.loc[_is_tip, "clade_size"].to_numpy(dtype=float)
+    _present = phylo_raw.loc[_is_tip, "trait_present"].to_numpy(
+        dtype=np.uint64
+    )
+    _totals = np.bincount(_codes, weights=_weights)
     site_frequencies = pd.DataFrame(
         {
             f"site {site}"
@@ -314,16 +318,15 @@ def tabulate_site_frequencies(focal_sites, phylo_raw, site_effect_sizes):
                 f" (s={site_effect_sizes[site]:g})"
                 if site in focal_sites
                 else " (neutral)"
-            ): (
-                pd.Series(
-                    ((_present >> np.uint64(site)) & np.uint64(1)) * _weights
-                )
-                .groupby(_tips["config"].to_numpy())
-                .sum()
-                / pd.Series(_weights).groupby(_tips["config"].to_numpy()).sum()
+            ): np.bincount(
+                _codes,
+                weights=((_present >> np.uint64(site)) & np.uint64(1))
+                * _weights,
             )
+            / _totals
             for site in range(NUM_SITES)
         },
+        index=_configs,
     ).T
     # genome-weighted fraction of fossil genomes carrying each site, by run
     site_frequencies
