@@ -196,79 +196,6 @@ def tabulate_effect_sizes(config_df):
     return background_sites, control_sites, focal_sites, site_effect_sizes
 
 
-@app.cell
-def load_phylogeny(data_paths):
-    _parts = []
-    _offset = 0
-    for _path in data_paths:
-        _df = pl.read_parquet(
-            _path,
-            columns=[
-                "ancestor_offset",
-                "origin_time",
-                "last_origin_time",
-                "clade_size",
-                "trait_present",
-                "config",
-                "layer",
-                "subgrid",
-            ],
-        )
-        # unminify: rows are in depth-first order, with id = row index;
-        # offset ids so they are unique across runs' files
-        _parts.append(
-            _df.with_row_index("id")
-            .with_columns(
-                pl.col("id").cast(pl.Int64) + _offset,
-                ancestor_id=(
-                    pl.col("id").cast(pl.Int64)
-                    + _offset
-                    - pl.col("ancestor_offset").cast(pl.Int64)
-                ),
-                config=pl.col("config").cast(pl.String),
-                # the full-grid run also fills subgrid (0) on inner nodes
-                subgrid=pl.when(pl.col("clade_size") > 0).then(
-                    pl.col("subgrid").cast(pl.Int64)
-                ),
-                trait_present=pl.col("trait_present").cast(pl.Int64),
-            )
-            .drop("ancestor_offset")
-            .to_pandas()
-        )
-        _offset += len(_df)
-        del _df
-    phylo_raw = pd.concat(_parts, ignore_index=True)
-    del _parts
-    assert (phylo_raw["id"] == np.arange(len(phylo_raw))).all()
-    # some roots lack origin_time; roots can be no later than the run start
-    _no_time = phylo_raw["origin_time"].isna()
-    assert (
-        phylo_raw.loc[_no_time, "ancestor_id"] == phylo_raw.loc[_no_time, "id"]
-    ).all()
-    phylo_raw["origin_time"] = phylo_raw["origin_time"].fillna(-1)
-    phylo_raw["last_origin_time"] = phylo_raw["last_origin_time"].fillna(
-        phylo_raw["origin_time"]
-    )
-    phylo_raw.info()
-    return (phylo_raw,)
-
-
-@app.cell
-def check_phylogeny(phylo_raw):
-    _is_genome = phylo_raw["clade_size"] > 0
-    assert (_is_genome == phylo_raw["trait_present"].notna()).all()
-    assert (_is_genome == phylo_raw["subgrid"].notna()).all()
-    assert phylo_raw["config"].notna().all()
-    assert (phylo_raw["ancestor_id"] <= phylo_raw["id"]).all()
-    _has_child = np.zeros(len(phylo_raw), dtype=bool)
-    _has_child[phylo_raw["ancestor_id"]] = True
-    _has_child[phylo_raw["ancestor_id"] == phylo_raw["id"]] = False
-    # collapsed monomorphic clades and fossil genomes are leaves
-    assert not (_has_child & _is_genome).any()
-    "ok"
-    return
-
-
 @app.cell(hide_code=True)
 def delimit_prep_data():
     mo.md("""
@@ -285,50 +212,157 @@ def delimit_prep_data():
 
 
 @app.cell
-def tabulate_tips(phylo_raw):
-    _tips = phylo_raw[phylo_raw["clade_size"] > 0]
-    _tips.groupby("config").agg(
-        num_leaves=("id", "size"),
-        num_genomes=("clade_size", "sum"),
-        clade_size_mean=("clade_size", "mean"),
-        clade_size_max=("clade_size", "max"),
-        num_layers=("layer", "nunique"),
-        origin_time_min=("origin_time", "min"),
-        last_origin_time_max=("last_origin_time", "max"),
-        negative_origin_frac=("last_origin_time", lambda x: (x < 0).mean()),
-    ).T
+def load_phylogeny(data_paths, focal_sites, site_effect_sizes):
+    # runs are independent, so each run's file is loaded, checked, summarized,
+    # and pruned separately to bound memory use
+    _pruned, _tips, _site_freqs, _times = [], [], [], []
+    _offset = 0
+    for _path in data_paths:
+        # unminify: rows are in depth-first order, with id = row index
+        _raw = (
+            pl.read_parquet(
+                _path,
+                columns=[
+                    "ancestor_offset",
+                    "origin_time",
+                    "last_origin_time",
+                    "clade_size",
+                    "trait_present",
+                    "config",
+                    "layer",
+                    "subgrid",
+                ],
+            )
+            .with_row_index("id")
+            .with_columns(
+                pl.col("id").cast(pl.Int64),
+                ancestor_id=(
+                    pl.col("id").cast(pl.Int64)
+                    - pl.col("ancestor_offset").cast(pl.Int64)
+                ),
+                config=pl.col("config").cast(pl.String),
+                # the full-grid run also fills subgrid (0) on inner nodes
+                subgrid=pl.when(pl.col("clade_size") > 0).then(
+                    pl.col("subgrid").cast(pl.Int64)
+                ),
+                trait_present=pl.col("trait_present").cast(pl.Int64),
+            )
+            .drop("ancestor_offset")
+            .to_pandas()
+        )
+
+        # some roots lack origin_time; roots can be no later than run start
+        _no_time = _raw["origin_time"].isna()
+        assert (
+            _raw.loc[_no_time, "ancestor_id"] == _raw.loc[_no_time, "id"]
+        ).all()
+        _raw["origin_time"] = _raw["origin_time"].fillna(-1)
+        _raw["last_origin_time"] = _raw["last_origin_time"].fillna(
+            _raw["origin_time"]
+        )
+
+        _is_genome = _raw["clade_size"] > 0
+        assert (_is_genome == _raw["trait_present"].notna()).all()
+        assert (_is_genome == _raw["subgrid"].notna()).all()
+        assert _raw["config"].notna().all()
+        assert (_raw["ancestor_id"] <= _raw["id"]).all()
+        _has_child = np.zeros(len(_raw), dtype=bool)
+        _has_child[_raw["ancestor_id"]] = True
+        _has_child[_raw["ancestor_id"] == _raw["id"]] = False
+        # collapsed monomorphic clades and fossil genomes are leaves
+        assert not (_has_child & _is_genome).any()
+
+        _tips.append(
+            _raw[_is_genome]
+            .groupby("config")
+            .agg(
+                num_leaves=("id", "size"),
+                num_genomes=("clade_size", "sum"),
+                clade_size_mean=("clade_size", "mean"),
+                clade_size_max=("clade_size", "max"),
+                num_layers=("layer", "nunique"),
+                origin_time_min=("origin_time", "min"),
+                last_origin_time_max=("last_origin_time", "max"),
+                negative_origin_frac=(
+                    "last_origin_time",
+                    lambda x: (x < 0).mean(),
+                ),
+            )
+            .assign(num_nodes=len(_raw)),
+        )
+        _times.append(
+            _raw.assign(is_genome=_is_genome)
+            .groupby(["config", "is_genome"])[
+                ["origin_time", "last_origin_time"]
+            ]
+            .describe(),
+        )
+
+        _extant = _is_genome & (_raw["last_origin_time"] >= 0)
+        _weights = _raw.loc[_extant, "clade_size"].to_numpy(dtype=float)
+        _present = _raw.loc[_extant, "trait_present"].to_numpy(dtype=np.uint64)
+        _site_freqs.append(
+            pd.Series(
+                {
+                    f"site {site}"
+                    + (
+                        f" (s={site_effect_sizes[site]:g})"
+                        if site in focal_sites
+                        else " (neutral)"
+                    ): (
+                        ((_present >> np.uint64(site)) & np.uint64(1))
+                        * _weights
+                    ).sum()
+                    / _weights.sum()
+                    for site in range(NUM_SITES)
+                },
+                name=_raw["config"].iloc[0],
+            ),
+        )
+
+        _part = (
+            _raw.assign(extant=_extant)
+            .pipe(pfl.alifestd_to_working_format, mutate=True)
+            .pipe(pfl.alifestd_prune_extinct_lineages_asexual, mutate=True)
+            .pipe(pfl.alifestd_collapse_unifurcations, mutate=True)
+            .pipe(pfl.alifestd_to_working_format, mutate=True)
+            .pipe(pfl.alifestd_mark_leaves, mutate=True)
+            .reset_index(drop=True)
+        )
+        del _raw
+        assert (_part["is_leaf"] == _part["extant"]).all()
+        # offset ids so they are unique across runs
+        _part["id"] += _offset
+        _part["ancestor_id"] += _offset
+        _offset += len(_part)
+        _pruned.append(_part)
+        del _part
+
+    phylo_pruned = pd.concat(_pruned, ignore_index=True)
+    del _pruned
+    assert (phylo_pruned["id"] == np.arange(len(phylo_pruned))).all()
+    tips_summary = pd.concat(_tips).T
+    times_summary = pd.concat(_times).T
+    # genome-weighted fraction of fossil genomes carrying each site, by run
+    site_frequencies = pd.DataFrame(_site_freqs).T
+    phylo_pruned.info()
+    return phylo_pruned, site_frequencies, times_summary, tips_summary
+
+
+@app.cell
+def tabulate_tips(tips_summary):
+    tips_summary
     return
 
 
 @app.cell
-def tabulate_site_frequencies(focal_sites, phylo_raw, site_effect_sizes):
-    _is_tip = (phylo_raw["clade_size"] > 0) & (
-        phylo_raw["last_origin_time"] >= 0
-    )
-    _codes, _configs = pd.factorize(phylo_raw.loc[_is_tip, "config"])
-    _weights = phylo_raw.loc[_is_tip, "clade_size"].to_numpy(dtype=float)
-    _present = phylo_raw.loc[_is_tip, "trait_present"].to_numpy(
-        dtype=np.uint64
-    )
-    _totals = np.bincount(_codes, weights=_weights)
-    site_frequencies = pd.DataFrame(
-        {
-            f"site {site}"
-            + (
-                f" (s={site_effect_sizes[site]:g})"
-                if site in focal_sites
-                else " (neutral)"
-            ): np.bincount(
-                _codes,
-                weights=((_present >> np.uint64(site)) & np.uint64(1))
-                * _weights,
-            )
-            / _totals
-            for site in range(NUM_SITES)
-        },
-        index=_configs,
-    ).T
-    # genome-weighted fraction of fossil genomes carrying each site, by run
+def describe_times(times_summary):
+    times_summary
+    return
+
+
+@app.cell
+def tabulate_site_frequencies(site_frequencies):
     site_frequencies
     return
 
@@ -340,34 +374,6 @@ def note_site_frequencies():
     With the trait fixed, parsimony places its gain at tree roots, which are not counted as MDCs, so the screens have little to work with for that site.
     """)
     return
-
-
-@app.cell
-def describe_times(phylo_raw):
-    phylo_raw.assign(is_genome=phylo_raw["clade_size"] > 0).groupby(
-        "is_genome"
-    )[["origin_time", "last_origin_time"]].describe().T.assign(
-        dtype=str(phylo_raw["origin_time"].dtype),
-    )
-    return
-
-
-@app.cell
-def prune_phylogeny(phylo_raw):
-    phylo_pruned = (
-        phylo_raw.assign(
-            extant=(phylo_raw["clade_size"] > 0)
-            & (phylo_raw["last_origin_time"] >= 0),
-        )
-        .pipe(pfl.alifestd_to_working_format)
-        .pipe(pfl.alifestd_prune_extinct_lineages_asexual, mutate=True)
-        .pipe(pfl.alifestd_collapse_unifurcations, mutate=True)
-        .pipe(pfl.alifestd_to_working_format, mutate=True)
-        .pipe(pfl.alifestd_mark_leaves, mutate=True)
-        .reset_index(drop=True)
-    )
-    assert (phylo_pruned["is_leaf"] == phylo_pruned["extant"]).all()
-    return (phylo_pruned,)
 
 
 @app.cell(hide_code=True)
