@@ -102,43 +102,45 @@ def show_schema(data_paths):
 
 @app.cell
 def load_config(data_paths):
-    _lazy = pl.concat(
-        [pl.scan_parquet(path) for path in data_paths], how="diagonal_relaxed"
-    )
-    _schema = _lazy.collect_schema()
-    _config_cols = [
-        name
-        for name in _schema.names()
-        if name.startswith(("ASYNC_GA_", "CEREBRASLIB_", "dstream_algo"))
-        or re.match(r"^mls_.*$", name)
-        or name
-        in (
-            "config",
-            "genomeFlavor",
-            "populationFlavor",
-            "globalSeed",
-            "nCol",
-            "nRow",
-            "nColSubgrid",
-            "nRowSubgrid",
-            "nWav",
-            "nTrait",
-            "nCycle",
-            "tilePopSize",
-            "tournSize",
-            "replicate",
-            "trait_focal",
-            "dstream_S",
-            "hstrat_differentia_bitwidth",
+    def _config_cols(names):
+        return [
+            name
+            for name in names
+            if name.startswith(("ASYNC_GA_", "CEREBRASLIB_", "dstream_algo"))
+            or re.match(r"^mls_.*$", name)
+            or name
+            in (
+                "config",
+                "genomeFlavor",
+                "populationFlavor",
+                "globalSeed",
+                "nCol",
+                "nRow",
+                "nColSubgrid",
+                "nRowSubgrid",
+                "nWav",
+                "nTrait",
+                "nCycle",
+                "tilePopSize",
+                "tournSize",
+                "replicate",
+                "trait_focal",
+                "dstream_S",
+                "hstrat_differentia_bitwidth",
+            )
+        ]
+
+    _rows = []
+    for _path in data_paths:
+        _lazy = pl.scan_parquet(_path).filter(pl.col("clade_size") > 0)
+        # each file holds one run; check before taking its first row
+        assert _lazy.select(pl.col("config").n_unique()).collect().item() == 1
+        _rows.append(
+            _lazy.select(_config_cols(_lazy.collect_schema().names()))
+            .head(1)
+            .collect()
         )
-    ]
-    config_df = (
-        _lazy.filter(pl.col("clade_size") > 0)
-        .select(_config_cols)
-        .unique()
-        .sort("nRowSubgrid")
-        .collect()
-    )
+    config_df = pl.concat(_rows, how="diagonal_relaxed").sort("nRowSubgrid")
     assert config_df["config"].is_unique().all(), "expected one row per run"
     assert (config_df["nRowSubgrid"] == config_df["nColSubgrid"]).all()
     config_df.transpose(include_header=True)
