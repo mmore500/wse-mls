@@ -37,6 +37,7 @@ with app.setup:
     NUM_SITES = 16
     ALPHA = 0.05
     NUM_CONTROL_SITES = 8
+    COST_ADJ_PSEUDOCOUNT = 2
     MAX_TREE_LEAVES = 4000
     SEED = 1
 
@@ -1079,6 +1080,236 @@ def plot_adj_freq_detection(adj_freq_screen, mutation_order, pop_size_order):
 
 
 @app.cell(hide_code=True)
+def delimit_cost_adj_freq_screen():
+    mo.md(r"""
+    ## Cost-adjusted Mutation-frequency Screen (No Configuration Knowledge)
+
+    The rate-adjusted screen above uses each site's true within-host gain probability, which is not known for empirical data.
+    This screen instead estimates, from the tree alone, how a site's between-host cost reduces the chance that a gain is ever sampled, and asks whether the site has more MDCs than its cost would allow if it arose at the neutral rate (i.e., a within-host advantage).
+
+    Model: each gain founds a carrier lineage growing as a subcritical Galton-Watson branching process with geometric offspring, and carriers are sampled sparsely and independently.
+    Then the number of sampled carriers $K$ in a sampled clade (an MDC's `carriers`) follows $P(K = k \mid K \geq 1) \propto \left|\binom{1/2}{k}\right| x^k$, whose maximum likelihood estimate from mean carriers per MDC $\bar{k}$ is $\hat{x} = 1 - (2\bar{k} - 1)^{-2}$.
+    In the sparse sampling limit, the probability that a gain is ever sampled is proportional to $D = (1 - \sqrt{1 - x}) / \sqrt{x} = \sqrt{1 - 1 / \bar{k}}$, so estimated gains are proportional to $M / D$ for MDC count $M$.
+
+    Within each population, a site's expected MDC count under the null of no within-host advantage is the neutral baseline $\lambda$ scaled by $D_\mathrm{site} / D_\mathrm{neutral}$, with $D_\mathrm{neutral}$ from pooled background-site MDCs (other background sites, for neutral control sites).
+    To stabilize small populations, each site's $\bar{k}$ is shrunk toward the neutral $\bar{k}$ with {COST_ADJ_PSEUDOCOUNT} pseudo-MDCs.
+    A site is detected if it has more MDCs than expected (upper-tail Poisson probability below $\alpha$).
+
+    As a validation, estimated gain ratios $(M / D)_\mathrm{site} / (M / D)_\mathrm{neutral}$, pooled over populations of each size, are compared with true within-host gain ratios from run configuration (used only for this comparison).
+    """.replace("{COST_ADJ_PSEUDOCOUNT}", str(COST_ADJ_PSEUDOCOUNT)))
+    return
+
+
+@app.cell
+def calc_cost_adj_freq_screen(
+    background_sites,
+    control_sites,
+    focal_sites,
+    mdcs,
+    populations,
+    site_effect_sizes,
+):
+    def _sampled_fraction(kbar):
+        # relative chance that a gain is ever sampled, given mean sampled
+        # carriers per MDC (sparse-sampling branching-process model)
+        return np.sqrt(np.clip(1.0 - 1.0 / kbar, 0.0, None))
+
+    _pops = populations.loc[populations["is_full_size"], "pop_code"]
+    _by_site = (
+        mdcs.groupby(["pop_code", "site"])
+        .agg(mdc_count=("id", "size"), carriers=("carriers", "sum"))
+        .reindex(
+            pd.MultiIndex.from_product(
+                [_pops, range(NUM_SITES)], names=["pop_code", "site"]
+            ),
+            fill_value=0,
+        )
+    )
+    _M = _by_site["mdc_count"].unstack("site")
+    _K = _by_site["carriers"].unstack("site")
+    _records = []
+    for _site in [*focal_sites, *control_sites]:
+        _is_control = _site in control_sites
+        _ref = [s for s in background_sites if s != _site]
+        _lam = _M[_ref].mean(axis=1)
+        _kbar_ref = _K[_ref].sum(axis=1) / _M[_ref].sum(axis=1)
+        _kbar = (_K[_site] + COST_ADJ_PSEUDOCOUNT * _kbar_ref) / (
+            _M[_site] + COST_ADJ_PSEUDOCOUNT
+        )
+        _expected = (
+            _lam * _sampled_fraction(_kbar) / _sampled_fraction(_kbar_ref)
+        )
+        _records.append(
+            pd.DataFrame(
+                {
+                    "pop_code": _M.index,
+                    "site": _site,
+                    "is_control": _is_control,
+                    "mdc_count": _M[_site].to_numpy(),
+                    "lambda": _lam.to_numpy(),
+                    "kbar": _kbar.to_numpy(),
+                    "kbar_neutral": _kbar_ref.to_numpy(),
+                    "expected": _expected.to_numpy(),
+                    "poisson_sf_p": np.where(
+                        _expected > 0,
+                        scipy_stats.poisson.sf(_M[_site] - 1, _expected),
+                        np.nan,
+                    ),
+                },
+            ),
+        )
+    cost_adj_freq_screen = pd.concat(_records, ignore_index=True).merge(
+        populations[["pop_code", "pop_size", "pop_tiles"]], on="pop_code"
+    )
+    cost_adj_freq_screen["observed_over_expected"] = (
+        cost_adj_freq_screen["mdc_count"] / cost_adj_freq_screen["expected"]
+    )
+    cost_adj_freq_screen["mutation"] = np.where(
+        cost_adj_freq_screen["is_control"],
+        "Neutral",
+        cost_adj_freq_screen["site"]
+        .map(site_effect_sizes)
+        .map("s={:g}".format),
+    )
+    cost_adj_freq_screen["detected"] = (
+        cost_adj_freq_screen["poisson_sf_p"] < ALPHA
+    )
+
+    # validation: pooled estimated vs true within-host gain ratios
+    _pooled = (
+        mdcs[mdcs["pop_code"].isin(_pops)]
+        .groupby(["pop_size", "site"])
+        .agg(mdc_count=("id", "size"), kbar=("carriers", "mean"))
+        .reset_index()
+    )
+    _pooled["est_gains"] = _pooled["mdc_count"] / _sampled_fraction(
+        _pooled["kbar"]
+    )
+    _neutral = (
+        _pooled[_pooled["site"].isin(background_sites)]
+        .groupby("pop_size")[["mdc_count", "est_gains"]]
+        .mean()
+    )
+    _pooled["raw_ratio"] = _pooled["mdc_count"] / _pooled["pop_size"].map(
+        _neutral["mdc_count"]
+    )
+    _pooled["est_gain_ratio"] = _pooled["est_gains"] / _pooled["pop_size"].map(
+        _neutral["est_gains"]
+    )
+    cost_adj_validation = _pooled[_pooled["site"].isin(focal_sites)]
+    cost_adj_freq_screen.groupby(["pop_size", "mutation"], sort=False).agg(
+        num_populations=("pop_code", "nunique"),
+        mdc_count_mean=("mdc_count", "mean"),
+        expected_mean=("expected", "mean"),
+        kbar_median=("kbar", "median"),
+        observed_over_expected_median=("observed_over_expected", "median"),
+        detection_rate=("detected", "mean"),
+    ).unstack("pop_size")
+    return cost_adj_freq_screen, cost_adj_validation
+
+
+@app.cell
+def tabulate_cost_adj_validation(
+    cost_adj_validation,
+    site_effect_sizes,
+    site_gain_ratios,
+):
+    cost_adj_validation.assign(
+        effect_size=cost_adj_validation["site"].map(site_effect_sizes),
+        true_gain_ratio=cost_adj_validation["site"].map(site_gain_ratios),
+    ).pivot_table(
+        index=["site", "effect_size", "true_gain_ratio"],
+        columns="pop_size",
+        values=["raw_ratio", "est_gain_ratio"],
+    )
+    return
+
+
+@app.cell
+def plot_cost_adj_validation(
+    cost_adj_validation,
+    pop_size_order,
+    site_effect_sizes,
+    site_gain_ratios,
+):
+    _data = cost_adj_validation.assign(
+        true_gain_ratio=cost_adj_validation["site"].map(site_gain_ratios),
+        effect_size=cost_adj_validation["site"].map(site_effect_sizes),
+    )
+    with tp.teed(
+        sns.scatterplot,
+        data=_data,
+        x="true_gain_ratio",
+        y="est_gain_ratio",
+        hue="pop_size",
+        hue_order=pop_size_order,
+        palette="viridis",
+        style="effect_size",
+        s=60,
+        teeplot_outexclude=["palette", "hue_order", "s"],
+        teeplot_show=True,
+        teeplot_subdir=pathlib.Path(__file__).stem,
+    ) as _ax:
+        _ax.set_xscale("log")
+        _ax.set_yscale("log")
+        _lim = [
+            0.3,
+            _data[["true_gain_ratio", "est_gain_ratio"]].max().max() * 2,
+        ]
+        _ax.plot(_lim, _lim, color="gray", linestyle="--", zorder=0)
+        _ax.axhline(1, color="lightgray", linestyle=":", zorder=0)
+        _ax.set_xlabel("True Within-host Gain Ratio")
+        _ax.set_ylabel("Estimated Gain Ratio\n(cost-adjusted, no config)")
+        sns.move_legend(
+            _ax, "upper left", bbox_to_anchor=(1, 1), frameon=False
+        )
+        sns.despine(ax=_ax)
+        _ax.figure.set_size_inches(4, 3.2)
+    return
+
+
+@app.cell
+def plot_cost_adj_freq_detection(
+    cost_adj_freq_screen,
+    mutation_order,
+    pop_size_order,
+):
+    with tp.teed(
+        sns.pointplot,
+        data=cost_adj_freq_screen.astype({"detected": float}),
+        x="mutation",
+        y="detected",
+        order=mutation_order,
+        hue="pop_size",
+        hue_order=pop_size_order,
+        palette="viridis",
+        errorbar=("ci", 95),
+        n_boot=1000,
+        seed=SEED,
+        dodge=0.4,
+        teeplot_outattrs={"screen": "cost-adjusted"},
+        teeplot_outexclude=["palette", "hue_order", "dodge", "order", "seed"],
+        teeplot_show=True,
+        teeplot_subdir=pathlib.Path(__file__).stem,
+    ) as _ax:
+        _ax.axhline(ALPHA, color="gray", linestyle="--", zorder=0)
+        _ax.set_ylim(-0.05, 1.05)
+        _ax.set_xlabel("Mutation (effect size)")
+        _ax.set_ylabel("Detection Rate\n(cost-adjusted excess)")
+        _ax.tick_params(axis="x", rotation=30)
+        sns.move_legend(
+            _ax,
+            "upper left",
+            bbox_to_anchor=(1, 1),
+            title="Subgrid",
+            frameon=False,
+        )
+        sns.despine(ax=_ax)
+        _ax.figure.set_size_inches(5, 2.6)
+    return
+
+
+@app.cell(hide_code=True)
 def delimit_fitness_screen():
     mo.md("""
     ## Clade-fitness Screen
@@ -1324,10 +1555,16 @@ def delimit_detectability():
 
 
 @app.cell
-def tabulate_detectability(adj_freq_screen, fitness_detection, freq_screen):
+def tabulate_detectability(
+    adj_freq_screen,
+    cost_adj_freq_screen,
+    fitness_detection,
+    freq_screen,
+):
     _screens = {
         "frequency": freq_screen,
         "rate-adjusted frequency depletion": adj_freq_screen,
+        "cost-adjusted frequency excess": cost_adj_freq_screen,
         **{
             f"fitness {_stat} {_subset}": fitness_detection[
                 (fitness_detection["normalization"] == "epoch100")
