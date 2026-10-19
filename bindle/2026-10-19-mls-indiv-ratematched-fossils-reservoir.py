@@ -331,6 +331,7 @@ def load_phylogeny(data_paths, focal_sites, site_effect_sizes):
         )
         del _raw
         assert (_part["is_leaf"] == _part["extant"]).all()
+        _part = _part.drop(columns=["extant", "layer"])
         # offset ids so they are unique across runs
         _part["id"] += _offset
         _part["ancestor_id"] += _offset
@@ -421,7 +422,7 @@ def split_populations(config_df, phylo_pruned):
         },
     ).to_frame("value")
 
-    phylo_split = (
+    _phylo_split = (
         phylo_pruned.assign(
             ancestor_id=np.where(
                 _pure[_ancestor_ids], _ancestor_ids, phylo_pruned["id"]
@@ -434,27 +435,22 @@ def split_populations(config_df, phylo_pruned):
         .reset_index(drop=True)
     )
     _root_pops = (
-        phylo_split.loc[phylo_split["is_leaf"]]
+        _phylo_split.loc[_phylo_split["is_leaf"]]
         .groupby("root_id")["pop_code"]
         .agg(["first", "nunique"])
     )
     assert (_root_pops["nunique"] == 1).all()
-    phylo_split["pop_code"] = phylo_split["root_id"].map(_root_pops["first"])
-    assert (phylo_split["pop_code"] >= 0).all()
-    phylo_split["config"] = phylo_split.groupby("pop_code")[
+    _phylo_split["pop_code"] = _phylo_split["root_id"].map(_root_pops["first"])
+    assert (_phylo_split["pop_code"] >= 0).all()
+    _phylo_split["config"] = _phylo_split.groupby("pop_code")[
         "config"
     ].transform("first")
-    phylo_split["subgrid"] = (phylo_split["pop_code"] % 2**32).astype(int)
-    split_summary
-    return (phylo_split,)
-
-
-@app.cell
-def tabulate_populations(config_df, phylo_split):
+    _phylo_split["subgrid"] = (_phylo_split["pop_code"] % 2**32).astype(int)
+    # the split tree is kept only within this cell, to bound memory use
     _config = config_df.select(
         "config", "nRow", "nCol", "nRowSubgrid", "nColSubgrid", "tilePopSize"
     ).to_pandas()
-    _leaves = phylo_split[phylo_split["is_leaf"]]
+    _leaves = _phylo_split[_phylo_split["is_leaf"]]
     populations = (
         _leaves.groupby("pop_code")
         .agg(
@@ -488,24 +484,10 @@ def tabulate_populations(config_df, phylo_split):
     pop_size_order = (
         populations.sort_values("pop_tiles")["pop_size"].unique().tolist()
     )
-    populations.groupby(["pop_size", "is_full_size"], sort=False).agg(
-        num_populations=("pop_code", "size"),
-        pop_tiles=("pop_tiles", "first"),
-        tile_pop_size=("tilePopSize", "first"),
-        num_leaves_median=("num_leaves", "median"),
-        num_genomes_median=("num_genomes", "median"),
-        num_genomes_min=("num_genomes", "min"),
-        num_genomes_max=("num_genomes", "max"),
-        num_roots_median=("num_roots", "median"),
-    ).T
-    return pop_size_order, populations
-
-
-@app.cell
-def prep_phylogeny(phylo_split, populations):
+    del _leaves
     _full_pops = populations.loc[populations["is_full_size"], "pop_code"]
     phylo = (
-        phylo_split[phylo_split["pop_code"].isin(_full_pops)]
+        _phylo_split[_phylo_split["pop_code"].isin(_full_pops)]
         .pipe(pfl.alifestd_to_working_format)
         .pipe(pfl.alifestd_mark_roots, mutate=True)
         .pipe(pfl.alifestd_mark_root_id, mutate=True)
@@ -515,6 +497,7 @@ def prep_phylogeny(phylo_split, populations):
     phylo["trait_present"] = (
         phylo["trait_present"].fillna(0).to_numpy(dtype=np.uint64)
     )
+    del _phylo_split
     _is_leaf = phylo["is_leaf"].to_numpy()
     phylo["num_genomes"] = pfl.alifestd_calc_clade_trait_count_asexual(
         phylo[["id", "ancestor_id"]],
@@ -536,7 +519,28 @@ def prep_phylogeny(phylo_split, populations):
     )
     phylo = phylo.pipe(pfl.alifestd_mark_clade_duration_asexual, mutate=True)
     phylo.info()
-    return (phylo,)
+    return phylo, pop_size_order, populations, split_summary
+
+
+@app.cell
+def tabulate_split(split_summary):
+    split_summary
+    return
+
+
+@app.cell
+def tabulate_populations(populations):
+    populations.groupby(["pop_size", "is_full_size"], sort=False).agg(
+        num_populations=("pop_code", "size"),
+        pop_tiles=("pop_tiles", "first"),
+        tile_pop_size=("tilePopSize", "first"),
+        num_leaves_median=("num_leaves", "median"),
+        num_genomes_median=("num_genomes", "median"),
+        num_genomes_min=("num_genomes", "min"),
+        num_genomes_max=("num_genomes", "max"),
+        num_roots_median=("num_roots", "median"),
+    ).T
+    return
 
 
 @app.cell
