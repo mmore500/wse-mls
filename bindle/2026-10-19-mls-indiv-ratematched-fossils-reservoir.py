@@ -423,12 +423,13 @@ def split_populations(config_df, phylo_pruned):
     ).to_frame("value")
 
     _phylo_split = (
-        phylo_pruned.assign(
+        phylo_pruned[_pure]
+        .assign(
             ancestor_id=np.where(
                 _pure[_ancestor_ids], _ancestor_ids, phylo_pruned["id"]
-            ),
-            pop_code=_pop_code,
-        )[_pure]
+            )[_pure],
+            pop_code=_pop_code[_pure],
+        )
         .pipe(pfl.alifestd_to_working_format, mutate=True)
         .pipe(pfl.alifestd_mark_roots, mutate=True)
         .pipe(pfl.alifestd_mark_root_id, mutate=True)
@@ -488,7 +489,7 @@ def split_populations(config_df, phylo_pruned):
     _full_pops = populations.loc[populations["is_full_size"], "pop_code"]
     phylo = (
         _phylo_split[_phylo_split["pop_code"].isin(_full_pops)]
-        .pipe(pfl.alifestd_to_working_format)
+        .pipe(pfl.alifestd_to_working_format, mutate=True)
         .pipe(pfl.alifestd_mark_roots, mutate=True)
         .pipe(pfl.alifestd_mark_root_id, mutate=True)
         .pipe(pfl.alifestd_mark_num_leaves_asexual, mutate=True)
