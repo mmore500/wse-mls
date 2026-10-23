@@ -114,7 +114,7 @@ def load_config(data_paths):
             name
             for name in names
             if name.startswith(("ASYNC_GA_", "CEREBRASLIB_", "dstream_algo"))
-            or re.match(r"^mls_.*$", name)
+            or re.match(r"^(mls|deleterious|beneficial)_", name)
             or name
             in (
                 "config",
