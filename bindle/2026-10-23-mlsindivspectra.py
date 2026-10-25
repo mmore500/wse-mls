@@ -141,6 +141,30 @@ def top_legend(g, title=None):
         _legend.remove()
 
 
+@app.function
+def right_legend(g):
+    """Replace a FacetGrid's legend with a single-column legend to the right
+    of the panels, vertically centered on them."""
+    _handles = [*g.legend.legend_handles]
+    _labels = [_text.get_text() for _text in g.legend.get_texts()]
+    g.legend.remove()
+    g._legend = None
+    g.tight_layout()
+    _boxes = [_ax.get_position() for _ax in g.axes.flat]
+    g.figure.legend(
+        _handles,
+        _labels,
+        loc="center left",
+        bbox_to_anchor=(
+            max(_b.x1 for _b in _boxes) + 0.02,
+            (min(_b.y0 for _b in _boxes) + max(_b.y1 for _b in _boxes)) / 2,
+        ),
+        ncol=1,
+        frameon=False,
+        handletextpad=0.5,
+    )
+
+
 @app.cell(hide_code=True)
 def do_watermark():
     mo.md(f"""
@@ -1612,7 +1636,7 @@ def plot_enrichment_by_kind(
         estimator="median",
         errorbar=("pi", 50),
         dodge=0.3,
-        height=2.4,
+        height=1.8,
         aspect=1.1,
         teeplot_outexclude=[
             "palette",
@@ -1627,9 +1651,7 @@ def plot_enrichment_by_kind(
     ) as _g:
         gap_points(*_g.axes.flat, _g.legend)
         _g.refline(y=1, color="gray", linestyle="--")
-        _g.set_axis_labels(
-            "Effect Size (%)", "MDC Fold Enrichment\n(median, IQR)"
-        )
+        _g.set_axis_labels("", "MDC Enrichment\n(median, IQR)")
         _g.set_titles(col_template="subgrid {col_name}")
         for _a in _g.axes.flat:
             plt.setp(
@@ -1638,7 +1660,23 @@ def plot_enrichment_by_kind(
                 ha="right",
                 rotation_mode="anchor",
             )
-        top_legend(_g)
+        right_legend(_g)
+        # x axis label in the bottom left corner, left of the tick labels
+        _renderer = _g.figure.canvas.get_renderer()
+        _ticks = [
+            _t.get_window_extent(_renderer).transformed(
+                _g.figure.transFigure.inverted()
+            )
+            for _t in _g.axes.flat[-2].get_xticklabels()
+        ]
+        _g.figure.text(
+            min(_b.x0 for _b in _ticks) - 0.01,
+            min(_b.y0 for _b in _ticks),
+            "Effect\nSize (%)",
+            ha="right",
+            va="bottom",
+            fontsize=plt.rcParams["axes.labelsize"],
+        )
     plt.close("all")
     return
 
