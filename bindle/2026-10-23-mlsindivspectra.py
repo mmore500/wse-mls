@@ -1312,5 +1312,161 @@ def plot_detectability(detectability, mutation_order, pop_size_order):
     return
 
 
+@app.cell(hide_code=True)
+def delimit_by_kind():
+    mo.md(f"""
+    ## Detectability by Site Class
+
+    The same screen results, recast with effect size on the x axis, site class as color, and subgrid size as columns.
+    Neutral control sites appear as their own x position.
+    Error bars are 95% bootstrap confidence intervals over populations; the dashed line marks $\\alpha = {ALPHA}$.
+    Fitness screens shown use `epoch100` normalization.
+    """)
+    return
+
+
+@app.cell
+def tabulate_by_kind(fitness_detection, freq_screen):
+    def _split_mutation(df):
+        _parts = df["mutation"].str.extract(r"^(\S+) s=(\S+)$")
+        return df.assign(
+            kind=_parts[0].fillna("Neutral"),
+            effect_size=_parts[1].fillna("neutral"),
+        )
+
+    by_kind = pd.concat(
+        [
+            freq_screen.assign(screen="frequency"),
+            *(
+                fitness_detection[
+                    (fitness_detection["normalization"] == "epoch100")
+                    & (fitness_detection["stat"] == _stat)
+                    & (fitness_detection["subset"] == _subset)
+                ].assign(screen=f"fitness {_stat} {_subset}")
+                for _stat in ("carriers", "clade_duration")
+                for _subset in ("all", "inner_f75")
+            ),
+        ],
+        ignore_index=True,
+    )[["screen", "pop_code", "pop_size", "site", "mutation", "detected"]].pipe(
+        _split_mutation
+    )
+    kind_order = [
+        _kind
+        for _kind in ("MLS", "ben", "del", "Neutral")
+        if _kind in set(by_kind["kind"])
+    ]
+    effect_size_order = ["neutral"] + sorted(
+        set(by_kind["effect_size"]) - {"neutral"}, key=float
+    )
+    kind_palette = dict(
+        zip(kind_order, [*sns.color_palette("colorblind", 3), "gray"])
+    )
+    freq_by_kind = freq_screen.pipe(_split_mutation)
+    by_kind.groupby(["screen", "pop_size", "kind", "effect_size"], sort=False)[
+        "detected"
+    ].mean().unstack("pop_size")
+    return (
+        by_kind,
+        effect_size_order,
+        freq_by_kind,
+        kind_order,
+        kind_palette,
+    )
+
+
+@app.cell
+def plot_detection_by_kind(
+    by_kind,
+    effect_size_order,
+    kind_order,
+    kind_palette,
+    pop_size_order,
+):
+    for _screen, _df in by_kind.groupby("screen", sort=False):
+        with tp.teed(
+            sns.catplot,
+            data=_df.astype({"detected": float}),
+            x="effect_size",
+            y="detected",
+            order=effect_size_order,
+            hue="kind",
+            hue_order=kind_order,
+            palette=kind_palette,
+            col="pop_size",
+            col_order=pop_size_order,
+            kind="point",
+            errorbar=("ci", 95),
+            n_boot=1000,
+            seed=SEED,
+            dodge=0.3,
+            height=2.4,
+            aspect=0.9,
+            teeplot_outattrs={"screen": _screen.replace(" ", "-")},
+            teeplot_outexclude=[
+                "palette",
+                "hue_order",
+                "col_order",
+                "dodge",
+                "order",
+                "seed",
+            ],
+            teeplot_show=True,
+            teeplot_subdir=pathlib.Path(__file__).stem,
+        ) as _g:
+            _g.refline(y=ALPHA, color="gray", linestyle="--")
+            _g.set(ylim=(-0.05, 1.05))
+            _g.set_axis_labels("Effect Size", f"Detection Rate\n({_screen})")
+            _g.set_titles(col_template="subgrid {col_name}")
+            _g.tick_params(axis="x", rotation=30)
+            _g.legend.set_title("Site Class")
+        plt.close("all")
+    return
+
+
+@app.cell
+def plot_enrichment_by_kind(
+    effect_size_order,
+    freq_by_kind,
+    kind_order,
+    kind_palette,
+    pop_size_order,
+):
+    with tp.teed(
+        sns.catplot,
+        data=freq_by_kind,
+        x="effect_size",
+        y="fold_enrichment",
+        order=effect_size_order,
+        hue="kind",
+        hue_order=kind_order,
+        palette=kind_palette,
+        col="pop_size",
+        col_order=pop_size_order,
+        kind="point",
+        estimator="median",
+        errorbar=("pi", 50),
+        dodge=0.3,
+        height=2.4,
+        aspect=0.9,
+        teeplot_outexclude=[
+            "palette",
+            "hue_order",
+            "col_order",
+            "dodge",
+            "order",
+        ],
+        teeplot_show=True,
+        teeplot_subdir=pathlib.Path(__file__).stem,
+    ) as _g:
+        _g.refline(y=1, color="gray", linestyle="--")
+        _g.set_axis_labels("Effect Size", "MDC Fold Enrichment\n(median, IQR)")
+        _g.set_titles(col_template="subgrid {col_name}")
+        _g.tick_params(axis="x", rotation=30)
+        _g.legend.set_title("Site Class")
+    plt.close("all")
+    return
+
+
 if __name__ == "__main__":
     app.run()
