@@ -98,7 +98,9 @@ def gap_points(*artists):
 def effect_pct(effect):
     """Express an effect size label as a percent, passing "neu" through."""
     return (
-        effect if effect in ("neu", "neutral") else f"{float(effect) * 100:g}"
+        effect
+        if effect in ("neu", "neutral")
+        else f"{float(effect) * 100:.1f}"
     )
 
 
