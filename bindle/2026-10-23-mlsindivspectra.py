@@ -68,8 +68,10 @@ def describe_notebook():
     The genome carries three spectra of four sites each, with base effect sizes $s_i \\in [0.05, 0.025, 0.01, 0.005]$, plus four neutral sites:
 
     - **MLS** sites (`MLS`) both are favored within a host and reduce transmission,
-    - **between-host deleterious** sites (`del`) only reduce transmission, and
-    - **within-host beneficial** sites (`ben`) are only favored within a host.
+    - **between-group deleterious** sites (`bgDEL`) only reduce transmission, and
+    - **within-group beneficial** sites (`wgBEN`) are only favored within a host.
+
+    Labels follow the ETI framework, with evaluation bar notation giving each trait's between-group (transmission) effect above and within-group (host) effect below, and $\\varnothing$ for no effect: MLS $|^{{-}}_{{+}}$, bgDEL $|^{{-}}_{{\\varnothing}}$, wgBEN $|^{{\\varnothing}}_{{+}}$, and neutral sites NEU $|^{{\\varnothing}}_{{\\varnothing}}$.
 
     Each transmission-reducing site present blocks infection of an uninfected host with probability $s_i$ times a transmission reduction scale (0.5 here).
     Each within-host-favored site is gained within a host with probability equal to the mutant fraction after 25 within-host doublings with relative growth rate $1 + s_i$ (and lost with growth rate $1 / (1 + s_i)$).
@@ -223,7 +225,19 @@ def tabulate_effect_sizes(config_df):
     # every neutral site serves as a null control, against the others
     control_sites = background_sites
 
-    _kind_labels = {"mls": "MLS", "deleterious": "del", "beneficial": "ben"}
+    # ETI evaluation bar notation: between-group effect above, within-group
+    # effect below, with null (crossed circle) for no effect
+    kind_labels = {
+        "MLS": r"MLS $|^{-}_{+}$",
+        "bgDEL": r"bgDEL $|^{-}_{\varnothing}$",
+        "wgBEN": r"wgBEN $|^{\varnothing}_{+}$",
+        "NEU": r"NEU $|^{\varnothing}_{\varnothing}$",
+    }
+    _kind_labels = {
+        "mls": kind_labels["MLS"],
+        "deleterious": kind_labels["bgDEL"],
+        "beneficial": kind_labels["wgBEN"],
+    }
     _site_info = effect_sizes.groupby("site")[["kind", "effect_size"]].first()
     site_labels = pd.Series(
         {
@@ -231,7 +245,7 @@ def tabulate_effect_sizes(config_df):
                 f"{_kind_labels[_site_info.loc[site, 'kind']]}"
                 f" s={_site_info.loc[site, 'effect_size']:g}"
                 if site in focal_sites
-                else "Neutral"
+                else kind_labels["NEU"]
             )
             for site in range(NUM_SITES)
         },
@@ -240,12 +254,13 @@ def tabulate_effect_sizes(config_df):
         f"{_kind_labels[_kind]} s={_s:g}"
         for _kind in _kind_labels
         for _s in sorted(_site_info["effect_size"].unique(), reverse=True)
-    ] + ["Neutral"]
+    ] + [kind_labels["NEU"]]
     effect_sizes
     return (
         background_sites,
         control_sites,
         focal_sites,
+        kind_labels,
         mutation_order,
         site_labels,
     )
@@ -422,8 +437,8 @@ def tabulate_site_frequencies(site_frequencies):
 @app.cell(hide_code=True)
 def note_site_frequencies():
     mo.md("""
-    Within-host beneficial sites are more common than neutral sites, increasingly so with effect size, while between-host deleterious sites are rarer, increasingly so with effect size.
-    MLS sites are only slightly more common than between-host deleterious sites at the same effect size, so their transmission cost outweighs their within-host advantage.
+    Within-group beneficial (`wgBEN`) sites are more common than neutral sites, increasingly so with effect size, while between-group deleterious (`bgDEL`) sites are rarer, increasingly so with effect size.
+    MLS sites are only slightly more common than `bgDEL` sites at the same effect size, so their transmission cost outweighs their within-host advantage.
     """)
     return
 
@@ -952,7 +967,12 @@ def plot_freq_enrichment(freq_screen, mutation_order, pop_size_order):
         _ax.set_yscale("log")
         _ax.set_xlabel("Mutation (site class and effect size)")
         _ax.set_ylabel("MDC Fold Enrichment\n(median, IQR)")
-        _ax.tick_params(axis="x", rotation=30)
+        plt.setp(
+            _ax.get_xticklabels(),
+            rotation=30,
+            ha="right",
+            rotation_mode="anchor",
+        )
         sns.move_legend(
             _ax,
             "upper left",
@@ -988,7 +1008,12 @@ def plot_freq_detection(freq_screen, mutation_order, pop_size_order):
         _ax.set_ylim(-0.05, 1.05)
         _ax.set_xlabel("Mutation (site class and effect size)")
         _ax.set_ylabel("Detection Rate\n(frequency screen)")
-        _ax.tick_params(axis="x", rotation=30)
+        plt.setp(
+            _ax.get_xticklabels(),
+            rotation=30,
+            ha="right",
+            rotation_mode="anchor",
+        )
         sns.move_legend(
             _ax,
             "upper left",
@@ -1180,7 +1205,13 @@ def plot_fitness_percentiles(
             "Mutation (site class and effect size)",
             "Mean MDC Percentile\n(median, IQR)",
         )
-        _g.tick_params(axis="x", rotation=30)
+        for _a in _g.axes.flat:
+            plt.setp(
+                _a.get_xticklabels(),
+                rotation=30,
+                ha="right",
+                rotation_mode="anchor",
+            )
         _g.legend.set_title("Subgrid")
     return
 
@@ -1225,7 +1256,13 @@ def plot_fitness_detection(fitness_detection, mutation_order, pop_size_order):
                 "Mutation (site class and effect size)",
                 "Detection Rate\n(fitness screen)",
             )
-            _g.tick_params(axis="x", rotation=30)
+            for _a in _g.axes.flat:
+                plt.setp(
+                    _a.get_xticklabels(),
+                    rotation=30,
+                    ha="right",
+                    rotation_mode="anchor",
+                )
             _g.legend.set_title("Subgrid")
             _g.figure.suptitle(f"normalization={_norm}", y=1.02)
         plt.close("all")
@@ -1238,7 +1275,7 @@ def delimit_detectability():
     ## Detectability Summary
 
     Fraction of populations in which each screen detects each site at $\\alpha = {ALPHA}$, by population size (rows) and site class and effect size (columns).
-    The `Neutral` column gives the false positive rate over neutral control sites, and should sit near {ALPHA}.
+    The `NEU` column gives the false positive rate over neutral control sites, and should sit near {ALPHA}.
     Fitness screens shown use `epoch100` normalization.
 
     Note that sampled fossil genomes per population grow with subgrid size (fossils were sampled with an equal budget per fossil layer and subgrid), so population size and sample size are confounded here.
@@ -1305,7 +1342,12 @@ def plot_detectability(detectability, mutation_order, pop_size_order):
             _ax.set_xlabel("Mutation (site class and effect size)")
             _ax.set_ylabel("Subgrid")
             _ax.set_title(_screen)
-            _ax.tick_params(axis="x", rotation=30)
+            plt.setp(
+                _ax.get_xticklabels(),
+                rotation=40,
+                ha="right",
+                rotation_mode="anchor",
+            )
             _ax.tick_params(axis="y", rotation=0)
             _ax.figure.set_size_inches(10, 2.4)
         plt.close("all")
@@ -1326,11 +1368,11 @@ def delimit_by_kind():
 
 
 @app.cell
-def tabulate_by_kind(fitness_detection, freq_screen):
+def tabulate_by_kind(fitness_detection, freq_screen, kind_labels):
     def _split_mutation(df):
-        _parts = df["mutation"].str.extract(r"^(\S+) s=(\S+)$")
+        _parts = df["mutation"].str.extract(r"^(.+) s=(\S+)$")
         return df.assign(
-            kind=_parts[0].fillna("Neutral"),
+            kind=_parts[0].fillna(kind_labels["NEU"]),
             effect_size=_parts[1].fillna("neutral"),
         )
 
@@ -1352,9 +1394,9 @@ def tabulate_by_kind(fitness_detection, freq_screen):
         _split_mutation
     )
     kind_order = [
-        _kind
-        for _kind in ("MLS", "ben", "del", "Neutral")
-        if _kind in set(by_kind["kind"])
+        kind_labels[_kind]
+        for _kind in ("MLS", "wgBEN", "bgDEL", "NEU")
+        if kind_labels[_kind] in set(by_kind["kind"])
     ]
     effect_size_order = ["neutral"] + sorted(
         set(by_kind["effect_size"]) - {"neutral"}, key=float
@@ -1412,7 +1454,13 @@ def plot_detection_by_kind(
             _g.set(ylim=(-0.05, 1.05))
             _g.set_axis_labels("Effect Size", f"Detection Rate\n({_screen})")
             _g.set_titles(col_template="subgrid {col_name}")
-            _g.tick_params(axis="x", rotation=30)
+            for _a in _g.axes.flat:
+                plt.setp(
+                    _a.get_xticklabels(),
+                    rotation=30,
+                    ha="right",
+                    rotation_mode="anchor",
+                )
             _g.legend.set_title("Site Class")
         plt.close("all")
     return
@@ -1456,7 +1504,13 @@ def plot_enrichment_by_kind(
         _g.refline(y=1, color="gray", linestyle="--")
         _g.set_axis_labels("Effect Size", "MDC Fold Enrichment\n(median, IQR)")
         _g.set_titles(col_template="subgrid {col_name}")
-        _g.tick_params(axis="x", rotation=30)
+        for _a in _g.axes.flat:
+            plt.setp(
+                _a.get_xticklabels(),
+                rotation=30,
+                ha="right",
+                rotation_mode="anchor",
+            )
         _g.legend.set_title("Site Class")
     plt.close("all")
     return
@@ -1465,10 +1519,10 @@ def plot_enrichment_by_kind(
 @app.cell(hide_code=True)
 def delimit_paired_freq_screen():
     mo.md(f"""
-    ## Paired Mutation-frequency Screen: MLS vs. Between-host Deleterious
+    ## Paired Mutation-frequency Screen: MLS vs. bgDEL
 
-    MLS and between-host deleterious sites at the same effect size share the same transmission reduction, so any difference in their MDC counts comes from the MLS site's within-host advantage.
-    Within each population, for each effect size, this screen tests whether the MLS site gives rise to more MDCs than the between-host deleterious site.
+    MLS and between-group deleterious (`bgDEL`) sites at the same effect size share the same transmission reduction, so any difference in their MDC counts comes from the MLS site's within-host advantage.
+    Within each population, for each effect size, this screen tests whether the MLS site gives rise to more MDCs than the `bgDEL` site.
     Under the null of equal rates, given $n = k_\\mathrm{{MLS}} + k_\\mathrm{{del}}$ MDCs in total, $k_\\mathrm{{MLS}} \\sim \\mathsf{{Binom}}(n, 1/2)$, so significance is the one-sided binomial survival probability of observing at least $k_\\mathrm{{MLS}}$ (the conditional exact test comparing two Poisson counts).
     Populations with no MDCs at either site count as not detected.
     As a null calibration, neutral sites are paired off and screened the same way.
@@ -1478,13 +1532,22 @@ def delimit_paired_freq_screen():
 
 
 @app.cell
-def calc_paired_freq_screen(background_sites, freq_screen, site_labels):
+def calc_paired_freq_screen(
+    background_sites,
+    freq_screen,
+    kind_labels,
+    site_labels,
+):
     _counts = freq_screen.pivot(
         index="pop_code", columns="site", values="mdc_count"
     )
     _site_of = {label: site for site, label in site_labels.items()}
     _pairs = [
-        (label.split("=")[1], _site, _site_of[f"del s={label.split('=')[1]}"])
+        (
+            label.split("=")[1],
+            _site,
+            _site_of[f"{kind_labels['bgDEL']} s={label.split('=')[1]}"],
+        )
         for _site, label in site_labels.items()
         if label.startswith("MLS ")
     ] + [
@@ -1498,7 +1561,11 @@ def calc_paired_freq_screen(background_sites, freq_screen, site_labels):
                     "pop_code": _counts.index,
                     "effect_size": _effect,
                     "kind": (
-                        "Neutral" if _effect == "neutral" else "MLS vs del"
+                        (
+                            kind_labels["NEU"]
+                            if _effect == "neutral"
+                            else f"{kind_labels['MLS']} vs {kind_labels['bgDEL']}"
+                        )
                     ),
                     "site": _site,
                     "comparator_site": _comparator,
@@ -1536,6 +1603,7 @@ def calc_paired_freq_screen(background_sites, freq_screen, site_labels):
 @app.cell
 def plot_paired_freq_detection(
     effect_size_order,
+    kind_labels,
     kind_palette,
     paired_freq_screen,
     pop_size_order,
@@ -1547,8 +1615,16 @@ def plot_paired_freq_detection(
         y="detected",
         order=effect_size_order,
         hue="kind",
-        hue_order=["MLS vs del", "Neutral"],
-        palette={"MLS vs del": kind_palette["MLS"], "Neutral": "gray"},
+        hue_order=[
+            f"{kind_labels['MLS']} vs {kind_labels['bgDEL']}",
+            kind_labels["NEU"],
+        ],
+        palette={
+            f"{kind_labels['MLS']} vs {kind_labels['bgDEL']}": kind_palette[
+                kind_labels["MLS"]
+            ],
+            kind_labels["NEU"]: "gray",
+        },
         col="pop_size",
         col_order=pop_size_order,
         kind="point",
@@ -1573,10 +1649,16 @@ def plot_paired_freq_detection(
         _g.refline(y=ALPHA, color="gray", linestyle="--")
         _g.set(ylim=(-0.05, 1.05))
         _g.set_axis_labels(
-            "Effect Size", "Detection Rate\n(MLS vs del frequency)"
+            "Effect Size", "Detection Rate\n(MLS vs bgDEL frequency)"
         )
         _g.set_titles(col_template="subgrid {col_name}")
-        _g.tick_params(axis="x", rotation=30)
+        for _a in _g.axes.flat:
+            plt.setp(
+                _a.get_xticklabels(),
+                rotation=30,
+                ha="right",
+                rotation_mode="anchor",
+            )
         _g.legend.set_title("Comparison")
     plt.close("all")
     return
@@ -1585,7 +1667,7 @@ def plot_paired_freq_detection(
 @app.cell(hide_code=True)
 def delimit_del_enrichment():
     mo.md(r"""
-    MDC fold enrichment normalized to the between-host deleterious site at the same effect size (rather than to neutral sites), i.e., $k_\mathrm{site} / k_\mathrm{del}$ within each population.
+    MDC fold enrichment normalized to the between-group deleterious (`bgDEL`) site at the same effect size (rather than to neutral sites), i.e., $k_\mathrm{site} / k_\mathrm{bgDEL}$ within each population.
     MLS sites above 1 reflect their within-host advantage over an otherwise-equal transmission cost.
     As a null reference, neutral sites are paired off and normalized to each other.
     Populations with no MDCs at the normalizing site are omitted.
@@ -1598,6 +1680,7 @@ def delimit_del_enrichment():
 def calc_del_enrichment(
     background_sites,
     freq_screen,
+    kind_labels,
     kind_order,
     site_labels,
 ):
@@ -1606,12 +1689,17 @@ def calc_del_enrichment(
     )
     _site_of = {label: site for site, label in site_labels.items()}
     _pairs = [
-        (_kind, _effect, _site, _site_of[f"del s={_effect}"])
+        (
+            _kind,
+            _effect,
+            _site,
+            _site_of[f"{kind_labels['bgDEL']} s={_effect}"],
+        )
         for _site, _label in site_labels.items()
-        if _label.startswith(("MLS ", "ben "))
+        if _label.startswith(("MLS ", "wgBEN "))
         for _kind, _effect in [_label.split(" s=")]
     ] + [
-        ("Neutral", "neutral", _a, _b)
+        (kind_labels["NEU"], "neutral", _a, _b)
         for _a, _b in zip(background_sites[::2], background_sites[1::2])
     ]
     del_enrichment = pd.concat(
@@ -1637,7 +1725,7 @@ def calc_del_enrichment(
     del_enrichment["fold_enrichment_del"] = (
         del_enrichment["k_site"] / del_enrichment["k_del"]
     )
-    del_kind_order = [_k for _k in kind_order if _k != "del"]
+    del_kind_order = [_k for _k in kind_order if _k != kind_labels["bgDEL"]]
     del_enrichment.groupby(
         ["pop_size", "kind", "effect_size"], sort=False
     ).agg(
@@ -1674,7 +1762,7 @@ def plot_del_enrichment(
         dodge=0.3,
         height=2.4,
         aspect=0.9,
-        teeplot_outattrs={"normalization": "del"},
+        teeplot_outattrs={"normalization": "bgDEL"},
         teeplot_outexclude=[
             "palette",
             "hue_order",
@@ -1688,11 +1776,28 @@ def plot_del_enrichment(
         _g.refline(y=1, color="gray", linestyle="--")
         _g.set(yscale="log")
         _g.set_axis_labels(
-            "Effect Size", "MDC Fold Enrichment vs del\n(median, IQR)"
+            "Effect Size", "MDC Fold Enrichment vs bgDEL\n(median, IQR)"
         )
         _g.set_titles(col_template="subgrid {col_name}")
-        _g.tick_params(axis="x", rotation=30)
+        for _a in _g.axes.flat:
+            plt.setp(
+                _a.get_xticklabels(),
+                rotation=30,
+                ha="right",
+                rotation_mode="anchor",
+            )
         _g.legend.set_title("Site Class")
+        # draw points as gaps in the connecting lines, with error bars
+        # shown within the gaps
+        for _a in [*_g.axes.flat, _g.legend]:
+            for _line in _a.get_lines():
+                if _line.get_marker() not in ("None", None, ""):
+                    _line.set_markerfacecolor("white")
+                    _line.set_markeredgecolor("white")
+                    _line.set_markersize(9)
+                    _line.set_zorder(2)
+                else:
+                    _line.set_zorder(3)
     plt.close("all")
     return
 
