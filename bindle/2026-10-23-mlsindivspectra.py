@@ -32,13 +32,6 @@ with app.setup:
     ALPHA = 0.05
     MAX_TREE_LEAVES = 4000
     SEED = 1
-    # dark, middle, and light shades per site class; plots use the middle
-    ETI_PALETTE = {
-        "MLS": ["#004C7A", "#0072B2", "#8FC3E6"],
-        "wgBEN": ["#00664F", "#009E73", "#8ED6BE"],
-        "bgDEL": ["#9A3F00", "#D55E00", "#F2B48A"],
-        "neutral": ["#6E6E6E", "#A6A6A6", "#DADADA"],
-    }
 
 
 @app.function
@@ -52,32 +45,24 @@ def gap_points(*artists):
             if line.get_marker() in ("None", None, ""):
                 line.set_zorder(3)
                 continue
-            # white ring clears a gap around a small colored core; legend
-            # entries (which have no error bar) get a larger core
-            _is_axes = hasattr(artist, "plot")
+            # white ring clears a gap around a small colored core
             line.set_markerfacecolor(line.get_color())
             line.set_markeredgecolor("white")
-            line.set_markersize(5 if _is_axes else 7)
-            line.set_markeredgewidth(4 if _is_axes else 3)
+            line.set_markersize(5)
+            line.set_markeredgewidth(4)
             line.set_zorder(2)
             # pinprick dot marks the position above the error bar
-            if _is_axes and len(line.get_xdata()):
+            if hasattr(artist, "plot") and len(line.get_xdata()):
                 artist.plot(
                     line.get_xdata(),
                     line.get_ydata(),
                     linestyle="none",
                     marker="o",
-                    markersize=2.2,
+                    markersize=3.5,
                     markeredgewidth=0,
                     color=line.get_color(),
                     zorder=4,
                 )
-
-
-@app.function
-def effect_pct(effect):
-    """Express an effect size label as a percent, passing "neutral" through."""
-    return effect if effect == "neutral" else f"{float(effect) * 100:g}"
 
 
 @app.function
@@ -87,32 +72,19 @@ def top_legend(g, title=None):
     _handles = [*g.legend.legend_handles]
     _labels = [_text.get_text() for _text in g.legend.get_texts()]
     g.legend.remove()
-    g._legend = None
-    # reclaim the space reserved for the old side legend
-    g.tight_layout()
     if title is not None:
         _handles.insert(0, plt.Line2D([], [], linestyle="none"))
         _labels.insert(0, title)
-    # center over the panels, rather than the whole figure
-    _boxes = [_ax.get_position() for _ax in g.axes.flat]
-    _center = (min(_b.x0 for _b in _boxes) + max(_b.x1 for _b in _boxes)) / 2
-    _legend = g.figure.legend(
+    g.figure.legend(
         _handles,
         _labels,
         loc="lower center",
-        bbox_to_anchor=(_center, 1.0),
+        bbox_to_anchor=(0.5, 1.0),
         ncol=len(_handles),
         frameon=False,
-        handletextpad=0.5,
-        columnspacing=2.5,
+        handletextpad=0.4,
+        columnspacing=1.2,
     )
-    if title is not None:
-        # collapse the dummy entry's empty handle slot, so the title sits
-        # flush and the legend's visible content is centered
-        _first_row = _legend._legend_handle_box.get_children()[
-            0
-        ].get_children()[0]
-        _first_row.get_children()[0].width = 0
 
 
 @app.cell(hide_code=True)
@@ -309,10 +281,10 @@ def tabulate_effect_sizes(config_df):
     # ETI evaluation bar notation: between-group effect above, within-group
     # effect below, with null (crossed circle) for no effect
     kind_labels = {
-        "MLS": r"MLS$|^{-}_{+}$",
-        "bgDEL": r"bgDEL$|^{-}_{\varnothing}$",
-        "wgBEN": r"wgBEN$|^{\varnothing}_{+}$",
-        "NEU": r"NEU$|^{\varnothing}_{\varnothing}$",
+        "MLS": r"MLS $|^{-}_{+}$",
+        "bgDEL": r"bgDEL $|^{-}_{\varnothing}$",
+        "wgBEN": r"wgBEN $|^{\varnothing}_{+}$",
+        "NEU": r"NEU $|^{\varnothing}_{\varnothing}$",
     }
     _kind_labels = {
         "mls": kind_labels["MLS"],
@@ -1458,7 +1430,7 @@ def tabulate_by_kind(fitness_detection, freq_screen, kind_labels):
         _parts = df["mutation"].str.extract(r"^(.+) s=(\S+)$")
         return df.assign(
             kind=_parts[0].fillna(kind_labels["NEU"]),
-            effect_size=_parts[1].fillna("neutral").map(effect_pct),
+            effect_size=_parts[1].fillna("neutral"),
         )
 
     by_kind = pd.concat(
@@ -1480,21 +1452,15 @@ def tabulate_by_kind(fitness_detection, freq_screen, kind_labels):
     )
     kind_order = [
         kind_labels[_kind]
-        for _kind in ("NEU", "wgBEN", "bgDEL", "MLS")
+        for _kind in ("MLS", "wgBEN", "bgDEL", "NEU")
         if kind_labels[_kind] in set(by_kind["kind"])
     ]
     effect_size_order = ["neutral"] + sorted(
         set(by_kind["effect_size"]) - {"neutral"}, key=float
     )
-    kind_palette = {
-        kind_labels[_kind]: ETI_PALETTE[_key][1]
-        for _kind, _key in (
-            ("NEU", "neutral"),
-            ("wgBEN", "wgBEN"),
-            ("bgDEL", "bgDEL"),
-            ("MLS", "MLS"),
-        )
-    }
+    kind_palette = dict(
+        zip(kind_order, [*sns.color_palette("colorblind", 3), "gray"])
+    )
     freq_by_kind = freq_screen.pipe(_split_mutation)
     by_kind.groupby(["screen", "pop_size", "kind", "effect_size"], sort=False)[
         "detected"
@@ -1529,7 +1495,7 @@ def plot_detection_by_kind(
             seed=SEED,
             dodge=0.3,
             height=2.4,
-            aspect=0.87,
+            aspect=1.3,
             teeplot_outattrs={"screen": _screen.replace(" ", "-")},
             teeplot_outexclude=[
                 "palette",
@@ -1546,9 +1512,7 @@ def plot_detection_by_kind(
             gap_points(*_g.axes.flat, _g.legend)
             _g.refline(y=ALPHA, color="gray", linestyle="--")
             _g.set(ylim=(-0.05, 1.05))
-            _g.set_axis_labels(
-                "Effect Size (%)", f"Detection Rate\n({_screen})"
-            )
+            _g.set_axis_labels("Effect Size", f"Detection Rate\n({_screen})")
             _g.set_titles(col_template="subgrid {col_name}")
             for _a in _g.axes.flat:
                 plt.setp(
@@ -1557,7 +1521,7 @@ def plot_detection_by_kind(
                     ha="right",
                     rotation_mode="anchor",
                 )
-            top_legend(_g)
+            top_legend(_g, "Site Class")
         plt.close("all")
     return
 
@@ -1587,7 +1551,7 @@ def plot_enrichment_by_kind(
         errorbar=("pi", 50),
         dodge=0.3,
         height=2.4,
-        aspect=0.87,
+        aspect=1.3,
         teeplot_outexclude=[
             "palette",
             "hue_order",
@@ -1601,9 +1565,7 @@ def plot_enrichment_by_kind(
     ) as _g:
         gap_points(*_g.axes.flat, _g.legend)
         _g.refline(y=1, color="gray", linestyle="--")
-        _g.set_axis_labels(
-            "Effect Size (%)", "MDC Fold Enrichment\n(median, IQR)"
-        )
+        _g.set_axis_labels("Effect Size", "MDC Fold Enrichment\n(median, IQR)")
         _g.set_titles(col_template="subgrid {col_name}")
         for _a in _g.axes.flat:
             plt.setp(
@@ -1612,7 +1574,7 @@ def plot_enrichment_by_kind(
                 ha="right",
                 rotation_mode="anchor",
             )
-        top_legend(_g)
+        top_legend(_g, "Site Class")
     plt.close("all")
     return
 
@@ -1650,7 +1612,7 @@ def calc_paired_freq_screen(
             _site_of[f"{kind_labels['bgDEL']} s={label.split('=')[1]}"],
         )
         for _site, label in site_labels.items()
-        if label.startswith(kind_labels["MLS"])
+        if label.startswith("MLS ")
     ] + [
         ("neutral", _a, _b)
         for _a, _b in zip(background_sites[::2], background_sites[1::2])
@@ -1660,7 +1622,7 @@ def calc_paired_freq_screen(
             pd.DataFrame(
                 {
                     "pop_code": _counts.index,
-                    "effect_size": effect_pct(_effect),
+                    "effect_size": _effect,
                     "kind": (
                         (
                             kind_labels["NEU"]
@@ -1716,8 +1678,11 @@ def plot_paired_freq_detection(
         y="detected",
         order=effect_size_order,
         hue="kind",
-        hue_order=[kind_labels["NEU"], kind_labels["MLS"]],
-        palette=kind_palette,
+        hue_order=[kind_labels["MLS"], kind_labels["NEU"]],
+        palette={
+            kind_labels["MLS"]: kind_palette[kind_labels["MLS"]],
+            kind_labels["NEU"]: "gray",
+        },
         col="pop_size",
         col_order=pop_size_order,
         col_wrap=2,
@@ -1727,7 +1692,7 @@ def plot_paired_freq_detection(
         seed=SEED,
         dodge=0.3,
         height=2.4,
-        aspect=0.87,
+        aspect=1.3,
         teeplot_outattrs={"screen": "paired-frequency"},
         teeplot_outexclude=[
             "palette",
@@ -1745,7 +1710,7 @@ def plot_paired_freq_detection(
         _g.refline(y=ALPHA, color="gray", linestyle="--")
         _g.set(ylim=(-0.05, 1.05))
         _g.set_axis_labels(
-            "Effect Size (%)",
+            "Effect Size",
             f"Detection Rate\nvs. {kind_labels['bgDEL']}",
         )
         _g.set_titles(col_template="subgrid {col_name}")
@@ -1793,7 +1758,7 @@ def calc_del_enrichment(
             _site_of[f"{kind_labels['bgDEL']} s={_effect}"],
         )
         for _site, _label in site_labels.items()
-        if _label.startswith((kind_labels["MLS"], kind_labels["wgBEN"]))
+        if _label.startswith(("MLS ", "wgBEN "))
         for _kind, _effect in [_label.split(" s=")]
     ] + [
         (kind_labels["NEU"], "neutral", _a, _b)
@@ -1805,7 +1770,7 @@ def calc_del_enrichment(
                 {
                     "pop_code": _counts.index,
                     "kind": _kind,
-                    "effect_size": effect_pct(_effect),
+                    "effect_size": _effect,
                     "site": _site,
                     "k_site": _counts[_site].to_numpy(),
                     "k_del": _counts[_norm].to_numpy(),
@@ -1860,7 +1825,7 @@ def plot_del_enrichment(
         errorbar=("pi", 50),
         dodge=0.3,
         height=2.4,
-        aspect=0.87,
+        aspect=1.3,
         teeplot_outattrs={"normalization": "bgDEL"},
         teeplot_outexclude=[
             "palette",
@@ -1877,7 +1842,7 @@ def plot_del_enrichment(
         _g.refline(y=1, color="gray", linestyle="--")
         _g.set(yscale="log")
         _g.set_axis_labels(
-            "Effect Size (%)",
+            "Effect Size",
             f"MDC Fold Enrichment\nvs. {kind_labels['bgDEL']}\n(median, IQR)",
         )
         _g.set_titles(col_template="subgrid {col_name}")
@@ -1888,7 +1853,7 @@ def plot_del_enrichment(
                 ha="right",
                 rotation_mode="anchor",
             )
-        top_legend(_g)
+        top_legend(_g, "Site Class")
     plt.close("all")
     return
 
