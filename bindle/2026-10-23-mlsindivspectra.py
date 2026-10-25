@@ -309,10 +309,10 @@ def tabulate_effect_sizes(config_df):
     # ETI evaluation bar notation: between-group effect above, within-group
     # effect below, with null (crossed circle) for no effect
     kind_labels = {
-        "MLS": r"MLS $|^{-}_{+}$",
-        "bgDEL": r"bgDEL $|^{-}_{\varnothing}$",
-        "wgBEN": r"wgBEN $|^{\varnothing}_{+}$",
-        "NEU": r"NEU $|^{\varnothing}_{\varnothing}$",
+        "MLS": r"MLS$|^{-}_{+}$",
+        "bgDEL": r"bgDEL$|^{-}_{\varnothing}$",
+        "wgBEN": r"wgBEN$|^{\varnothing}_{+}$",
+        "NEU": r"NEU$|^{\varnothing}_{\varnothing}$",
     }
     _kind_labels = {
         "mls": kind_labels["MLS"],
@@ -1529,7 +1529,7 @@ def plot_detection_by_kind(
             seed=SEED,
             dodge=0.3,
             height=2.4,
-            aspect=1.3,
+            aspect=0.87,
             teeplot_outattrs={"screen": _screen.replace(" ", "-")},
             teeplot_outexclude=[
                 "palette",
@@ -1557,7 +1557,7 @@ def plot_detection_by_kind(
                     ha="right",
                     rotation_mode="anchor",
                 )
-            top_legend(_g, "Site Class")
+            top_legend(_g)
         plt.close("all")
     return
 
@@ -1587,7 +1587,7 @@ def plot_enrichment_by_kind(
         errorbar=("pi", 50),
         dodge=0.3,
         height=2.4,
-        aspect=1.3,
+        aspect=0.87,
         teeplot_outexclude=[
             "palette",
             "hue_order",
@@ -1612,7 +1612,7 @@ def plot_enrichment_by_kind(
                 ha="right",
                 rotation_mode="anchor",
             )
-        top_legend(_g, "Site Class")
+        top_legend(_g)
     plt.close("all")
     return
 
@@ -1650,7 +1650,7 @@ def calc_paired_freq_screen(
             _site_of[f"{kind_labels['bgDEL']} s={label.split('=')[1]}"],
         )
         for _site, label in site_labels.items()
-        if label.startswith("MLS ")
+        if label.startswith(kind_labels["MLS"])
     ] + [
         ("neutral", _a, _b)
         for _a, _b in zip(background_sites[::2], background_sites[1::2])
@@ -1727,7 +1727,7 @@ def plot_paired_freq_detection(
         seed=SEED,
         dodge=0.3,
         height=2.4,
-        aspect=1.3,
+        aspect=0.87,
         teeplot_outattrs={"screen": "paired-frequency"},
         teeplot_outexclude=[
             "palette",
@@ -1793,7 +1793,7 @@ def calc_del_enrichment(
             _site_of[f"{kind_labels['bgDEL']} s={_effect}"],
         )
         for _site, _label in site_labels.items()
-        if _label.startswith(("MLS ", "wgBEN "))
+        if _label.startswith((kind_labels["MLS"], kind_labels["wgBEN"]))
         for _kind, _effect in [_label.split(" s=")]
     ] + [
         (kind_labels["NEU"], "neutral", _a, _b)
@@ -1860,7 +1860,7 @@ def plot_del_enrichment(
         errorbar=("pi", 50),
         dodge=0.3,
         height=2.4,
-        aspect=1.3,
+        aspect=0.87,
         teeplot_outattrs={"normalization": "bgDEL"},
         teeplot_outexclude=[
             "palette",
@@ -1888,7 +1888,7 @@ def plot_del_enrichment(
                 ha="right",
                 rotation_mode="anchor",
             )
-        top_legend(_g, "Site Class")
+        top_legend(_g)
     plt.close("all")
     return
 
