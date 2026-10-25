@@ -1366,13 +1366,7 @@ def tabulate_by_kind(fitness_detection, freq_screen):
     by_kind.groupby(["screen", "pop_size", "kind", "effect_size"], sort=False)[
         "detected"
     ].mean().unstack("pop_size")
-    return (
-        by_kind,
-        effect_size_order,
-        freq_by_kind,
-        kind_order,
-        kind_palette,
-    )
+    return by_kind, effect_size_order, freq_by_kind, kind_order, kind_palette
 
 
 @app.cell
