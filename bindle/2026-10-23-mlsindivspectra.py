@@ -98,7 +98,9 @@ def gap_points(*artists):
 def effect_pct(effect):
     """Express an effect size label as a percent, passing "neu" through."""
     return (
-        effect if effect in ("neu", "neutral") else f"{float(effect) * 100:g}"
+        effect
+        if effect in ("neu", "neutral")
+        else f"{float(effect) * 100:.1f}"
     )
 
 
@@ -1604,7 +1606,7 @@ def plot_detection_by_kind(
             n_boot=1000,
             seed=SEED,
             dodge=0.3,
-            height=1.8,
+            height=1.5,
             aspect=1.1,
             teeplot_outattrs={"screen": _screen.replace(" ", "-")},
             teeplot_outexclude=[
@@ -1627,8 +1629,9 @@ def plot_detection_by_kind(
             for _a in _g.axes.flat:
                 plt.setp(
                     _a.get_xticklabels(),
-                    rotation=30,
+                    rotation=90,
                     ha="right",
+                    va="center",
                     rotation_mode="anchor",
                 )
             corner_xlabel(_g, right_legend(_g))
@@ -1660,7 +1663,7 @@ def plot_enrichment_by_kind(
         estimator="median",
         errorbar=("pi", 50),
         dodge=0.3,
-        height=1.8,
+        height=1.5,
         aspect=1.1,
         teeplot_outexclude=[
             "palette",
@@ -1680,8 +1683,9 @@ def plot_enrichment_by_kind(
         for _a in _g.axes.flat:
             plt.setp(
                 _a.get_xticklabels(),
-                rotation=30,
+                rotation=90,
                 ha="right",
+                va="center",
                 rotation_mode="anchor",
             )
         corner_xlabel(_g, right_legend(_g))
@@ -1798,7 +1802,7 @@ def plot_paired_freq_detection(
         n_boot=1000,
         seed=SEED,
         dodge=0.3,
-        height=1.8,
+        height=1.5,
         aspect=1.1,
         teeplot_outattrs={"screen": "paired-frequency"},
         teeplot_outexclude=[
@@ -1824,8 +1828,9 @@ def plot_paired_freq_detection(
         for _a in _g.axes.flat:
             plt.setp(
                 _a.get_xticklabels(),
-                rotation=30,
+                rotation=90,
                 ha="right",
+                va="center",
                 rotation_mode="anchor",
             )
         corner_xlabel(_g, right_legend(_g))
@@ -1931,7 +1936,7 @@ def plot_del_enrichment(
         estimator="median",
         errorbar=("pi", 50),
         dodge=0.3,
-        height=1.8,
+        height=1.5,
         aspect=1.1,
         teeplot_outattrs={"normalization": "DELbg"},
         teeplot_outexclude=[
@@ -1956,8 +1961,9 @@ def plot_del_enrichment(
         for _a in _g.axes.flat:
             plt.setp(
                 _a.get_xticklabels(),
-                rotation=30,
+                rotation=90,
                 ha="right",
+                va="center",
                 rotation_mode="anchor",
             )
         corner_xlabel(_g, right_legend(_g))
