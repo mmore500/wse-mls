@@ -16,9 +16,12 @@ def osf_fetch(slug: str) -> pathlib.Path:
     url = f"https://osf.io/{slug}/download"
     if not cache_path.exists():
         print(f"downloading {url} -> {cache_path}")
+        # OSF outages can last minutes; back off up to 5 min between
+        # attempts, for roughly 20+ min of retrying in total
         retry = Retry(
-            total=6,
+            total=12,
             backoff_factor=2,
+            backoff_max=300,
             status_forcelist=(429, 500, 502, 503, 504),
             allowed_methods=("GET",),
         )
