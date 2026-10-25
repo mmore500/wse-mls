@@ -94,10 +94,8 @@ def gap_points(*artists):
 
 @app.function
 def effect_pct(effect):
-    """Express an effect size label as a percent, passing "neu" through."""
-    return (
-        effect if effect in ("neu", "neutral") else f"{float(effect) * 100:g}"
-    )
+    """Express an effect size label as a percent, passing "neutral" through."""
+    return effect if effect == "neutral" else f"{float(effect) * 100:g}"
 
 
 @app.function
@@ -141,31 +139,6 @@ def top_legend(g, title=None):
         if _legend.get_window_extent(_renderer).width <= _span:
             break
         _legend.remove()
-
-
-@app.function
-def right_legend(g):
-    """Replace a FacetGrid's legend with a single-column legend to the right
-    of the panels, vertically centered on them."""
-    _handles = [*g.legend.legend_handles]
-    _labels = [_text.get_text() for _text in g.legend.get_texts()]
-    g.legend.remove()
-    g._legend = None
-    g.tight_layout()
-    _boxes = [_ax.get_position() for _ax in g.axes.flat]
-    return g.figure.legend(
-        _handles,
-        _labels,
-        loc="center left",
-        bbox_to_anchor=(
-            max(_b.x1 for _b in _boxes) + 0.02,
-            (min(_b.y0 for _b in _boxes) + max(_b.y1 for _b in _boxes)) / 2,
-        ),
-        ncol=1,
-        frameon=False,
-        handletextpad=0.5,
-        labelspacing=1.0,
-    )
 
 
 @app.cell(hide_code=True)
@@ -1511,7 +1484,7 @@ def tabulate_by_kind(fitness_detection, freq_screen, kind_labels):
         _parts = df["mutation"].str.extract(r"^(.+) s=(\S+)$")
         return df.assign(
             kind=_parts[0].fillna(kind_labels["NEU"]),
-            effect_size=_parts[1].fillna("neu").map(effect_pct),
+            effect_size=_parts[1].fillna("neutral").map(effect_pct),
         )
 
     by_kind = pd.concat(
@@ -1536,8 +1509,8 @@ def tabulate_by_kind(fitness_detection, freq_screen, kind_labels):
         for _kind in ("NEU", "wgBEN", "bgDEL", "MLS")
         if kind_labels[_kind] in set(by_kind["kind"])
     ]
-    effect_size_order = ["neu"] + sorted(
-        set(by_kind["effect_size"]) - {"neu"}, key=float
+    effect_size_order = ["neutral"] + sorted(
+        set(by_kind["effect_size"]) - {"neutral"}, key=float
     )
     kind_palette = {
         kind_labels[_kind]: ETI_PALETTE[_key][1]
@@ -1639,7 +1612,7 @@ def plot_enrichment_by_kind(
         estimator="median",
         errorbar=("pi", 50),
         dodge=0.3,
-        height=1.8,
+        height=2.4,
         aspect=1.1,
         teeplot_outexclude=[
             "palette",
@@ -1654,7 +1627,9 @@ def plot_enrichment_by_kind(
     ) as _g:
         gap_points(*_g.axes.flat, _g.legend)
         _g.refline(y=1, color="gray", linestyle="--")
-        _g.set_axis_labels("", "MDC Enrichment\n(median, IQR)")
+        _g.set_axis_labels(
+            "Effect Size (%)", "MDC Fold Enrichment\n(median, IQR)"
+        )
         _g.set_titles(col_template="subgrid {col_name}")
         for _a in _g.axes.flat:
             plt.setp(
@@ -1663,26 +1638,7 @@ def plot_enrichment_by_kind(
                 ha="right",
                 rotation_mode="anchor",
             )
-        _legend = right_legend(_g)
-        # x axis label at bottom right, under the legend and level with the
-        # bottom of the tick labels
-        _renderer = _g.figure.canvas.get_renderer()
-        _ticks = [
-            _t.get_window_extent(_renderer).transformed(
-                _g.figure.transFigure.inverted()
-            )
-            for _t in _g.axes.flat[-2].get_xticklabels()
-        ]
-        _g.figure.text(
-            _legend.get_window_extent(_renderer)
-            .transformed(_g.figure.transFigure.inverted())
-            .x0,
-            min(_b.y0 for _b in _ticks),
-            "Effect\nSize (%)",
-            ha="left",
-            va="bottom",
-            fontsize=plt.rcParams["axes.labelsize"],
-        )
+        top_legend(_g)
     plt.close("all")
     return
 
@@ -1722,7 +1678,7 @@ def calc_paired_freq_screen(
         for _site, label in site_labels.items()
         if label.startswith(kind_labels["MLS"])
     ] + [
-        ("neu", _a, _b)
+        ("neutral", _a, _b)
         for _a, _b in zip(background_sites[::2], background_sites[1::2])
     ]
     paired_freq_screen = pd.concat(
@@ -1734,7 +1690,7 @@ def calc_paired_freq_screen(
                     "kind": (
                         (
                             kind_labels["NEU"]
-                            if _effect == "neu"
+                            if _effect == "neutral"
                             else kind_labels["MLS"]
                         )
                     ),
@@ -1866,7 +1822,7 @@ def calc_del_enrichment(
         if _label.startswith((kind_labels["MLS"], kind_labels["wgBEN"]))
         for _kind, _effect in [_label.split(" s=")]
     ] + [
-        (kind_labels["NEU"], "neu", _a, _b)
+        (kind_labels["NEU"], "neutral", _a, _b)
         for _a, _b in zip(background_sites[::2], background_sites[1::2])
     ]
     del_enrichment = pd.concat(
