@@ -1608,8 +1608,8 @@ def calc_del_enrichment(
     _pairs = [
         (_kind, _effect, _site, _site_of[f"del s={_effect}"])
         for _site, _label in site_labels.items()
+        if _label.startswith(("MLS ", "ben "))
         for _kind, _effect in [_label.split(" s=")]
-        if _kind in ("MLS", "ben")
     ] + [
         ("Neutral", "neutral", _a, _b)
         for _a, _b in zip(background_sites[::2], background_sites[1::2])
