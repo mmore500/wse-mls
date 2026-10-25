@@ -43,34 +43,52 @@ with app.setup:
 
 @app.function
 def gap_points(*artists):
-    """Draw point-plot markers as gaps in their connecting lines, with error
-    bars drawn within the gaps and a small dot marking each position."""
+    """Draw point-plot markers as gaps in their connecting lines, layered as:
+    connecting line, white gap, error bar, white halo, then a small dot
+    marking each position."""
     for artist in artists:
         if artist is None:
             continue
         for line in [*artist.get_lines()]:
             if line.get_marker() in ("None", None, ""):
-                line.set_zorder(3)
+                line.set_zorder(3)  # error bars (and reference lines)
                 continue
-            # white ring clears a gap around a small colored core; legend
-            # entries (which have no error bar) get a larger core
             _is_axes = hasattr(artist, "plot")
-            line.set_markerfacecolor(line.get_color())
-            line.set_markeredgecolor("white")
-            line.set_markersize(5 if _is_axes else 7)
-            line.set_markeredgewidth(4 if _is_axes else 3)
-            line.set_zorder(2)
-            # pinprick dot marks the position above the error bar
-            if _is_axes and len(line.get_xdata()):
+            if not _is_axes:
+                # legend entries have no error bar: white ring around a dot
+                line.set_markerfacecolor(line.get_color())
+                line.set_markeredgecolor("white")
+                line.set_markersize(7)
+                line.set_markeredgewidth(3)
+                continue
+            # connecting line below a white gap
+            line.set_zorder(1)
+            if not len(line.get_xdata()):
+                continue
+            _xy = line.get_xdata(), line.get_ydata()
+            artist.plot(
+                *_xy,
+                linestyle="none",
+                marker="o",
+                markersize=9,
+                markeredgewidth=0,
+                color="white",
+                zorder=2,
+            )
+            line.set_marker("None")
+            # white halo, then small dot, above the error bar
+            for _size, _color, _z in (
+                (3.6, "white", 4),
+                (2.2, line.get_color(), 5),
+            ):
                 artist.plot(
-                    line.get_xdata(),
-                    line.get_ydata(),
+                    *_xy,
                     linestyle="none",
                     marker="o",
-                    markersize=2.2,
+                    markersize=_size,
                     markeredgewidth=0,
-                    color=line.get_color(),
-                    zorder=4,
+                    color=_color,
+                    zorder=_z,
                 )
 
 
@@ -95,24 +113,56 @@ def top_legend(g, title=None):
         _labels.insert(0, title)
     # center over the panels, rather than the whole figure
     _boxes = [_ax.get_position() for _ax in g.axes.flat]
-    _center = (min(_b.x0 for _b in _boxes) + max(_b.x1 for _b in _boxes)) / 2
-    _legend = g.figure.legend(
+    _left = min(_b.x0 for _b in _boxes)
+    _right = max(_b.x1 for _b in _boxes)
+    _renderer = g.figure.canvas.get_renderer()
+    _span = (_right - _left) * g.figure.bbox.width
+    # tighten entry spacing as needed so the legend doesn't overhang
+    for _spacing in (2.5, 2.0, 1.5, 1.2, 1.0, 0.8, 0.6, 0.4):
+        _legend = g.figure.legend(
+            _handles,
+            _labels,
+            loc="lower center",
+            bbox_to_anchor=((_left + _right) / 2, 1.0),
+            ncol=len(_handles),
+            frameon=False,
+            handletextpad=0.5,
+            columnspacing=_spacing,
+        )
+        if title is not None:
+            # collapse the dummy entry's empty handle slot, so the title
+            # sits flush and the legend's visible content is centered
+            _first_row = _legend._legend_handle_box.get_children()[
+                0
+            ].get_children()[0]
+            _first_row.get_children()[0].width = 0
+        if _legend.get_window_extent(_renderer).width <= _span:
+            break
+        _legend.remove()
+
+
+@app.function
+def right_legend(g):
+    """Replace a FacetGrid's legend with a single-column legend to the right
+    of the panels, vertically centered on them."""
+    _handles = [*g.legend.legend_handles]
+    _labels = [_text.get_text() for _text in g.legend.get_texts()]
+    g.legend.remove()
+    g._legend = None
+    g.tight_layout()
+    _boxes = [_ax.get_position() for _ax in g.axes.flat]
+    g.figure.legend(
         _handles,
         _labels,
-        loc="lower center",
-        bbox_to_anchor=(_center, 1.0),
-        ncol=len(_handles),
+        loc="center left",
+        bbox_to_anchor=(
+            max(_b.x1 for _b in _boxes) + 0.02,
+            (min(_b.y0 for _b in _boxes) + max(_b.y1 for _b in _boxes)) / 2,
+        ),
+        ncol=1,
         frameon=False,
         handletextpad=0.5,
-        columnspacing=2.5,
     )
-    if title is not None:
-        # collapse the dummy entry's empty handle slot, so the title sits
-        # flush and the legend's visible content is centered
-        _first_row = _legend._legend_handle_box.get_children()[
-            0
-        ].get_children()[0]
-        _first_row.get_children()[0].width = 0
 
 
 @app.cell(hide_code=True)
@@ -1529,7 +1579,7 @@ def plot_detection_by_kind(
             seed=SEED,
             dodge=0.3,
             height=2.4,
-            aspect=0.87,
+            aspect=1.1,
             teeplot_outattrs={"screen": _screen.replace(" ", "-")},
             teeplot_outexclude=[
                 "palette",
@@ -1586,8 +1636,8 @@ def plot_enrichment_by_kind(
         estimator="median",
         errorbar=("pi", 50),
         dodge=0.3,
-        height=2.4,
-        aspect=0.87,
+        height=1.8,
+        aspect=1.1,
         teeplot_outexclude=[
             "palette",
             "hue_order",
@@ -1601,9 +1651,7 @@ def plot_enrichment_by_kind(
     ) as _g:
         gap_points(*_g.axes.flat, _g.legend)
         _g.refline(y=1, color="gray", linestyle="--")
-        _g.set_axis_labels(
-            "Effect Size (%)", "MDC Fold Enrichment\n(median, IQR)"
-        )
+        _g.set_axis_labels("", "MDC Enrichment\n(median, IQR)")
         _g.set_titles(col_template="subgrid {col_name}")
         for _a in _g.axes.flat:
             plt.setp(
@@ -1612,7 +1660,23 @@ def plot_enrichment_by_kind(
                 ha="right",
                 rotation_mode="anchor",
             )
-        top_legend(_g)
+        right_legend(_g)
+        # x axis label in the bottom left corner, left of the tick labels
+        _renderer = _g.figure.canvas.get_renderer()
+        _ticks = [
+            _t.get_window_extent(_renderer).transformed(
+                _g.figure.transFigure.inverted()
+            )
+            for _t in _g.axes.flat[-2].get_xticklabels()
+        ]
+        _g.figure.text(
+            min(_b.x0 for _b in _ticks) - 0.01,
+            min(_b.y0 for _b in _ticks),
+            "Effect\nSize (%)",
+            ha="right",
+            va="bottom",
+            fontsize=plt.rcParams["axes.labelsize"],
+        )
     plt.close("all")
     return
 
@@ -1727,7 +1791,7 @@ def plot_paired_freq_detection(
         seed=SEED,
         dodge=0.3,
         height=2.4,
-        aspect=0.87,
+        aspect=1.1,
         teeplot_outattrs={"screen": "paired-frequency"},
         teeplot_outexclude=[
             "palette",
@@ -1860,7 +1924,7 @@ def plot_del_enrichment(
         errorbar=("pi", 50),
         dodge=0.3,
         height=2.4,
-        aspect=0.87,
+        aspect=1.1,
         teeplot_outattrs={"normalization": "bgDEL"},
         teeplot_outexclude=[
             "palette",
