@@ -34,6 +34,59 @@ with app.setup:
     SEED = 1
 
 
+@app.function
+def gap_points(*artists):
+    """Draw point-plot markers as gaps in their connecting lines, with error
+    bars drawn within the gaps and a small dot marking each position."""
+    for artist in artists:
+        if artist is None:
+            continue
+        for line in [*artist.get_lines()]:
+            if line.get_marker() in ("None", None, ""):
+                line.set_zorder(3)
+                continue
+            # white ring clears a gap around a small colored core
+            line.set_markerfacecolor(line.get_color())
+            line.set_markeredgecolor("white")
+            line.set_markersize(5)
+            line.set_markeredgewidth(4)
+            line.set_zorder(2)
+            # pinprick dot marks the position above the error bar
+            if hasattr(artist, "plot") and len(line.get_xdata()):
+                artist.plot(
+                    line.get_xdata(),
+                    line.get_ydata(),
+                    linestyle="none",
+                    marker="o",
+                    markersize=3.5,
+                    markeredgewidth=0,
+                    color=line.get_color(),
+                    zorder=4,
+                )
+
+
+@app.function
+def top_legend(g, title=None):
+    """Replace a FacetGrid's legend with a single-row legend above the plot,
+    with the title (if any) as a leading dummy entry."""
+    _handles = [*g.legend.legend_handles]
+    _labels = [_text.get_text() for _text in g.legend.get_texts()]
+    g.legend.remove()
+    if title is not None:
+        _handles.insert(0, plt.Line2D([], [], linestyle="none"))
+        _labels.insert(0, title)
+    g.figure.legend(
+        _handles,
+        _labels,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 1.0),
+        ncol=len(_handles),
+        frameon=False,
+        handletextpad=0.4,
+        columnspacing=1.2,
+    )
+
+
 @app.cell(hide_code=True)
 def do_watermark():
     mo.md(f"""
@@ -963,6 +1016,7 @@ def plot_freq_enrichment(freq_screen, mutation_order, pop_size_order):
         teeplot_show=True,
         teeplot_subdir=pathlib.Path(__file__).stem,
     ) as _ax:
+        gap_points(_ax, _ax.get_legend())
         _ax.axhline(1, color="gray", linestyle="--", zorder=0)
         _ax.set_yscale("log")
         _ax.set_xlabel("Mutation (site class and effect size)")
@@ -1004,6 +1058,7 @@ def plot_freq_detection(freq_screen, mutation_order, pop_size_order):
         teeplot_show=True,
         teeplot_subdir=pathlib.Path(__file__).stem,
     ) as _ax:
+        gap_points(_ax, _ax.get_legend())
         _ax.axhline(ALPHA, color="gray", linestyle="--", zorder=0)
         _ax.set_ylim(-0.05, 1.05)
         _ax.set_xlabel("Mutation (site class and effect size)")
@@ -1200,6 +1255,7 @@ def plot_fitness_percentiles(
         teeplot_show=True,
         teeplot_subdir=pathlib.Path(__file__).stem,
     ) as _g:
+        gap_points(*_g.axes.flat, _g.legend)
         _g.refline(y=50, color="gray", linestyle="--")
         _g.set_axis_labels(
             "Mutation (site class and effect size)",
@@ -1250,6 +1306,7 @@ def plot_fitness_detection(fitness_detection, mutation_order, pop_size_order):
             teeplot_show=True,
             teeplot_subdir=pathlib.Path(__file__).stem,
         ) as _g:
+            gap_points(*_g.axes.flat, _g.legend)
             _g.refline(y=ALPHA, color="gray", linestyle="--")
             _g.set(ylim=(-0.05, 1.05))
             _g.set_axis_labels(
@@ -1431,18 +1488,20 @@ def plot_detection_by_kind(
             palette=kind_palette,
             col="pop_size",
             col_order=pop_size_order,
+            col_wrap=2,
             kind="point",
             errorbar=("ci", 95),
             n_boot=1000,
             seed=SEED,
             dodge=0.3,
             height=2.4,
-            aspect=0.9,
+            aspect=1.3,
             teeplot_outattrs={"screen": _screen.replace(" ", "-")},
             teeplot_outexclude=[
                 "palette",
                 "hue_order",
                 "col_order",
+                "col_wrap",
                 "dodge",
                 "order",
                 "seed",
@@ -1450,6 +1509,7 @@ def plot_detection_by_kind(
             teeplot_show=True,
             teeplot_subdir=pathlib.Path(__file__).stem,
         ) as _g:
+            gap_points(*_g.axes.flat, _g.legend)
             _g.refline(y=ALPHA, color="gray", linestyle="--")
             _g.set(ylim=(-0.05, 1.05))
             _g.set_axis_labels("Effect Size", f"Detection Rate\n({_screen})")
@@ -1461,7 +1521,7 @@ def plot_detection_by_kind(
                     ha="right",
                     rotation_mode="anchor",
                 )
-            _g.legend.set_title("Site Class")
+            top_legend(_g, "Site Class")
         plt.close("all")
     return
 
@@ -1485,22 +1545,25 @@ def plot_enrichment_by_kind(
         palette=kind_palette,
         col="pop_size",
         col_order=pop_size_order,
+        col_wrap=2,
         kind="point",
         estimator="median",
         errorbar=("pi", 50),
         dodge=0.3,
         height=2.4,
-        aspect=0.9,
+        aspect=1.3,
         teeplot_outexclude=[
             "palette",
             "hue_order",
             "col_order",
+            "col_wrap",
             "dodge",
             "order",
         ],
         teeplot_show=True,
         teeplot_subdir=pathlib.Path(__file__).stem,
     ) as _g:
+        gap_points(*_g.axes.flat, _g.legend)
         _g.refline(y=1, color="gray", linestyle="--")
         _g.set_axis_labels("Effect Size", "MDC Fold Enrichment\n(median, IQR)")
         _g.set_titles(col_template="subgrid {col_name}")
@@ -1511,7 +1574,7 @@ def plot_enrichment_by_kind(
                 ha="right",
                 rotation_mode="anchor",
             )
-        _g.legend.set_title("Site Class")
+        top_legend(_g, "Site Class")
     plt.close("all")
     return
 
@@ -1564,7 +1627,7 @@ def calc_paired_freq_screen(
                         (
                             kind_labels["NEU"]
                             if _effect == "neutral"
-                            else f"{kind_labels['MLS']} vs {kind_labels['bgDEL']}"
+                            else kind_labels["MLS"]
                         )
                     ),
                     "site": _site,
@@ -1615,30 +1678,27 @@ def plot_paired_freq_detection(
         y="detected",
         order=effect_size_order,
         hue="kind",
-        hue_order=[
-            f"{kind_labels['MLS']} vs {kind_labels['bgDEL']}",
-            kind_labels["NEU"],
-        ],
+        hue_order=[kind_labels["MLS"], kind_labels["NEU"]],
         palette={
-            f"{kind_labels['MLS']} vs {kind_labels['bgDEL']}": kind_palette[
-                kind_labels["MLS"]
-            ],
+            kind_labels["MLS"]: kind_palette[kind_labels["MLS"]],
             kind_labels["NEU"]: "gray",
         },
         col="pop_size",
         col_order=pop_size_order,
+        col_wrap=2,
         kind="point",
         errorbar=("ci", 95),
         n_boot=1000,
         seed=SEED,
         dodge=0.3,
         height=2.4,
-        aspect=0.9,
+        aspect=1.3,
         teeplot_outattrs={"screen": "paired-frequency"},
         teeplot_outexclude=[
             "palette",
             "hue_order",
             "col_order",
+            "col_wrap",
             "dodge",
             "order",
             "seed",
@@ -1646,10 +1706,12 @@ def plot_paired_freq_detection(
         teeplot_show=True,
         teeplot_subdir=pathlib.Path(__file__).stem,
     ) as _g:
+        gap_points(*_g.axes.flat, _g.legend)
         _g.refline(y=ALPHA, color="gray", linestyle="--")
         _g.set(ylim=(-0.05, 1.05))
         _g.set_axis_labels(
-            "Effect Size", "Detection Rate\n(MLS vs bgDEL frequency)"
+            "Effect Size",
+            f"Detection Rate\nvs. {kind_labels['bgDEL']}",
         )
         _g.set_titles(col_template="subgrid {col_name}")
         for _a in _g.axes.flat:
@@ -1659,7 +1721,7 @@ def plot_paired_freq_detection(
                 ha="right",
                 rotation_mode="anchor",
             )
-        _g.legend.set_title("Comparison")
+        top_legend(_g)
     plt.close("all")
     return
 
@@ -1742,6 +1804,7 @@ def plot_del_enrichment(
     del_enrichment,
     del_kind_order,
     effect_size_order,
+    kind_labels,
     kind_palette,
     pop_size_order,
 ):
@@ -1756,27 +1819,31 @@ def plot_del_enrichment(
         palette=kind_palette,
         col="pop_size",
         col_order=pop_size_order,
+        col_wrap=2,
         kind="point",
         estimator="median",
         errorbar=("pi", 50),
         dodge=0.3,
         height=2.4,
-        aspect=0.9,
+        aspect=1.3,
         teeplot_outattrs={"normalization": "bgDEL"},
         teeplot_outexclude=[
             "palette",
             "hue_order",
             "col_order",
+            "col_wrap",
             "dodge",
             "order",
         ],
         teeplot_show=True,
         teeplot_subdir=pathlib.Path(__file__).stem,
     ) as _g:
+        gap_points(*_g.axes.flat, _g.legend)
         _g.refline(y=1, color="gray", linestyle="--")
         _g.set(yscale="log")
         _g.set_axis_labels(
-            "Effect Size", "MDC Fold Enrichment vs bgDEL\n(median, IQR)"
+            "Effect Size",
+            f"MDC Fold Enrichment\nvs. {kind_labels['bgDEL']}\n(median, IQR)",
         )
         _g.set_titles(col_template="subgrid {col_name}")
         for _a in _g.axes.flat:
@@ -1786,18 +1853,7 @@ def plot_del_enrichment(
                 ha="right",
                 rotation_mode="anchor",
             )
-        _g.legend.set_title("Site Class")
-        # draw points as gaps in the connecting lines, with error bars
-        # shown within the gaps
-        for _a in [*_g.axes.flat, _g.legend]:
-            for _line in _a.get_lines():
-                if _line.get_marker() not in ("None", None, ""):
-                    _line.set_markerfacecolor("white")
-                    _line.set_markeredgecolor("white")
-                    _line.set_markersize(9)
-                    _line.set_zorder(2)
-                else:
-                    _line.set_zorder(3)
+        top_legend(_g, "Site Class")
     plt.close("all")
     return
 
