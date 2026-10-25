@@ -1462,5 +1462,125 @@ def plot_enrichment_by_kind(
     return
 
 
+@app.cell(hide_code=True)
+def delimit_paired_freq_screen():
+    mo.md(f"""
+    ## Paired Mutation-frequency Screen: MLS vs. Between-host Deleterious
+
+    MLS and between-host deleterious sites at the same effect size share the same transmission reduction, so any difference in their MDC counts comes from the MLS site's within-host advantage.
+    Within each population, for each effect size, this screen tests whether the MLS site gives rise to more MDCs than the between-host deleterious site.
+    Under the null of equal rates, given $n = k_\\mathrm{{MLS}} + k_\\mathrm{{del}}$ MDCs in total, $k_\\mathrm{{MLS}} \\sim \\mathsf{{Binom}}(n, 1/2)$, so significance is the one-sided binomial survival probability of observing at least $k_\\mathrm{{MLS}}$ (the conditional exact test comparing two Poisson counts).
+    Populations with no MDCs at either site count as not detected.
+    As a null calibration, neutral sites are paired off and screened the same way.
+    Error bars are 95% bootstrap confidence intervals over populations; the dashed line marks $\\alpha = {ALPHA}$.
+    """)
+    return
+
+
+@app.cell
+def calc_paired_freq_screen(background_sites, freq_screen, site_labels):
+    _counts = freq_screen.pivot(
+        index="pop_code", columns="site", values="mdc_count"
+    )
+    _site_of = {label: site for site, label in site_labels.items()}
+    _pairs = [
+        (label.split("=")[1], _site, _site_of[f"del s={label.split('=')[1]}"])
+        for _site, label in site_labels.items()
+        if label.startswith("MLS ")
+    ] + [
+        ("neutral", _a, _b)
+        for _a, _b in zip(background_sites[::2], background_sites[1::2])
+    ]
+    paired_freq_screen = pd.concat(
+        [
+            pd.DataFrame(
+                {
+                    "pop_code": _counts.index,
+                    "effect_size": _effect,
+                    "kind": (
+                        "Neutral" if _effect == "neutral" else "MLS vs del"
+                    ),
+                    "site": _site,
+                    "comparator_site": _comparator,
+                    "k_site": _counts[_site].to_numpy(),
+                    "k_comparator": _counts[_comparator].to_numpy(),
+                },
+            )
+            for _effect, _site, _comparator in _pairs
+        ],
+        ignore_index=True,
+    ).merge(
+        freq_screen[["pop_code", "pop_size"]].drop_duplicates(),
+        on="pop_code",
+    )
+    _n = paired_freq_screen["k_site"] + paired_freq_screen["k_comparator"]
+    paired_freq_screen["binom_sf_p"] = np.where(
+        _n > 0,
+        scipy_stats.binom.sf(paired_freq_screen["k_site"] - 1, _n, 0.5),
+        np.nan,
+    )
+    paired_freq_screen["detected"] = paired_freq_screen["binom_sf_p"] < ALPHA
+    paired_freq_screen.groupby(
+        ["pop_size", "kind", "effect_size"], sort=False
+    ).agg(
+        num_populations=("pop_code", "nunique"),
+        k_site_mean=("k_site", "mean"),
+        k_comparator_mean=("k_comparator", "mean"),
+        detection_rate=("detected", "mean"),
+    ).unstack(
+        "pop_size"
+    )
+    return (paired_freq_screen,)
+
+
+@app.cell
+def plot_paired_freq_detection(
+    effect_size_order,
+    kind_palette,
+    paired_freq_screen,
+    pop_size_order,
+):
+    with tp.teed(
+        sns.catplot,
+        data=paired_freq_screen.astype({"detected": float}),
+        x="effect_size",
+        y="detected",
+        order=effect_size_order,
+        hue="kind",
+        hue_order=["MLS vs del", "Neutral"],
+        palette={"MLS vs del": kind_palette["MLS"], "Neutral": "gray"},
+        col="pop_size",
+        col_order=pop_size_order,
+        kind="point",
+        errorbar=("ci", 95),
+        n_boot=1000,
+        seed=SEED,
+        dodge=0.3,
+        height=2.4,
+        aspect=0.9,
+        teeplot_outattrs={"screen": "paired-frequency"},
+        teeplot_outexclude=[
+            "palette",
+            "hue_order",
+            "col_order",
+            "dodge",
+            "order",
+            "seed",
+        ],
+        teeplot_show=True,
+        teeplot_subdir=pathlib.Path(__file__).stem,
+    ) as _g:
+        _g.refline(y=ALPHA, color="gray", linestyle="--")
+        _g.set(ylim=(-0.05, 1.05))
+        _g.set_axis_labels(
+            "Effect Size", "Detection Rate\n(MLS vs del frequency)"
+        )
+        _g.set_titles(col_template="subgrid {col_name}")
+        _g.tick_params(axis="x", rotation=30)
+        _g.legend.set_title("Comparison")
+    plt.close("all")
+    return
+
+
 if __name__ == "__main__":
     app.run()
