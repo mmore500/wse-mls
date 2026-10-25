@@ -35,8 +35,8 @@ with app.setup:
     # dark, middle, and light shades per site class; plots use the middle
     ETI_PALETTE = {
         "MLS": ["#004C7A", "#0072B2", "#8FC3E6"],
-        "wgBEN": ["#00664F", "#009E73", "#8ED6BE"],
-        "bgDEL": ["#9A3F00", "#D55E00", "#F2B48A"],
+        "BENwg": ["#00664F", "#009E73", "#8ED6BE"],
+        "DELbg": ["#9A3F00", "#D55E00", "#F2B48A"],
         "neutral": ["#6E6E6E", "#A6A6A6", "#DADADA"],
     }
 
@@ -55,11 +55,11 @@ def gap_points(*artists):
                 continue
             _is_axes = hasattr(artist, "plot")
             if not _is_axes:
-                # legend entries have no error bar: white ring around a dot
+                # legend entries: just a dot
+                line.set_linestyle("none")
                 line.set_markerfacecolor(line.get_color())
-                line.set_markeredgecolor("white")
                 line.set_markersize(7)
-                line.set_markeredgewidth(3)
+                line.set_markeredgewidth(0)
                 continue
             # connecting line below a white gap
             line.set_zorder(1)
@@ -163,8 +163,29 @@ def right_legend(g):
         ),
         ncol=1,
         frameon=False,
+        handlelength=0.8,
         handletextpad=0.5,
         labelspacing=1.0,
+    )
+
+
+@app.function
+def corner_xlabel(g, legend, text="Effect\nSize (%)"):
+    """Place the x axis label at bottom right, left-aligned under the legend
+    and level with the bottom of the bottom-left panel's tick labels."""
+    _renderer = g.figure.canvas.get_renderer()
+    _to_fig = g.figure.transFigure.inverted()
+    _ticks = [
+        _t.get_window_extent(_renderer).transformed(_to_fig)
+        for _t in g.axes.flat[-2].get_xticklabels()
+    ]
+    g.figure.text(
+        legend.get_window_extent(_renderer).transformed(_to_fig).x0,
+        min(_b.y0 for _b in _ticks),
+        text,
+        ha="left",
+        va="bottom",
+        fontsize=plt.rcParams["axes.labelsize"],
     )
 
 
@@ -202,10 +223,10 @@ def describe_notebook():
     The genome carries three spectra of four sites each, with base effect sizes $s_i \\in [0.05, 0.025, 0.01, 0.005]$, plus four neutral sites:
 
     - **MLS** sites (`MLS`) both are favored within a host and reduce transmission,
-    - **between-group deleterious** sites (`bgDEL`) only reduce transmission, and
-    - **within-group beneficial** sites (`wgBEN`) are only favored within a host.
+    - **between-group deleterious** sites (`DELbg`) only reduce transmission, and
+    - **within-group beneficial** sites (`BENwg`) are only favored within a host.
 
-    Labels follow the ETI framework, with evaluation bar notation giving each trait's between-group (transmission) effect above and within-group (host) effect below, and $\\varnothing$ for no effect: MLS $|^{{-}}_{{+}}$, bgDEL $|^{{-}}_{{\\varnothing}}$, wgBEN $|^{{\\varnothing}}_{{+}}$, and neutral sites NEU $|^{{\\varnothing}}_{{\\varnothing}}$.
+    Labels follow the ETI framework, with evaluation bar notation giving each trait's between-group (transmission) effect above and within-group (host) effect below, and $\\varnothing$ for no effect: MLS $|^{{-}}_{{+}}$, DELbg $|^{{-}}_{{\\varnothing}}$, BENwg $|^{{\\varnothing}}_{{+}}$, and neutral sites NEU $|^{{\\varnothing}}_{{\\varnothing}}$.
 
     Each transmission-reducing site present blocks infection of an uninfected host with probability $s_i$ times a transmission reduction scale (0.5 here).
     Each within-host-favored site is gained within a host with probability equal to the mutant fraction after 25 within-host doublings with relative growth rate $1 + s_i$ (and lost with growth rate $1 / (1 + s_i)$).
@@ -363,14 +384,14 @@ def tabulate_effect_sizes(config_df):
     # effect below, with null (crossed circle) for no effect
     kind_labels = {
         "MLS": r"MLS$|^{-}_{+}$",
-        "bgDEL": r"bgDEL$|^{-}_{\varnothing}$",
-        "wgBEN": r"wgBEN$|^{\varnothing}_{+}$",
+        "DELbg": r"DELbg$|^{-}_{\varnothing}$",
+        "BENwg": r"BENwg$|^{\varnothing}_{+}$",
         "NEU": r"NEU$|^{\varnothing}_{\varnothing}$",
     }
     _kind_labels = {
         "mls": kind_labels["MLS"],
-        "deleterious": kind_labels["bgDEL"],
-        "beneficial": kind_labels["wgBEN"],
+        "deleterious": kind_labels["DELbg"],
+        "beneficial": kind_labels["BENwg"],
     }
     _site_info = effect_sizes.groupby("site")[["kind", "effect_size"]].first()
     site_labels = pd.Series(
@@ -571,8 +592,8 @@ def tabulate_site_frequencies(site_frequencies):
 @app.cell(hide_code=True)
 def note_site_frequencies():
     mo.md("""
-    Within-group beneficial (`wgBEN`) sites are more common than neutral sites, increasingly so with effect size, while between-group deleterious (`bgDEL`) sites are rarer, increasingly so with effect size.
-    MLS sites are only slightly more common than `bgDEL` sites at the same effect size, so their transmission cost outweighs their within-host advantage.
+    Within-group beneficial (`BENwg`) sites are more common than neutral sites, increasingly so with effect size, while between-group deleterious (`DELbg`) sites are rarer, increasingly so with effect size.
+    MLS sites are only slightly more common than `DELbg` sites at the same effect size, so their transmission cost outweighs their within-host advantage.
     """)
     return
 
@@ -1101,7 +1122,7 @@ def plot_freq_enrichment(freq_screen, mutation_order, pop_size_order):
         _ax.axhline(1, color="gray", linestyle="--", zorder=0)
         _ax.set_yscale("log")
         _ax.set_xlabel("Mutation (site class and effect size)")
-        _ax.set_ylabel("MDC Fold Enrichment\n(median, IQR)")
+        _ax.set_ylabel("MDC Enrichment\n(median, IQR)")
         plt.setp(
             _ax.get_xticklabels(),
             rotation=30,
@@ -1533,7 +1554,7 @@ def tabulate_by_kind(fitness_detection, freq_screen, kind_labels):
     )
     kind_order = [
         kind_labels[_kind]
-        for _kind in ("NEU", "wgBEN", "bgDEL", "MLS")
+        for _kind in ("NEU", "BENwg", "DELbg", "MLS")
         if kind_labels[_kind] in set(by_kind["kind"])
     ]
     effect_size_order = ["neu"] + sorted(
@@ -1543,8 +1564,8 @@ def tabulate_by_kind(fitness_detection, freq_screen, kind_labels):
         kind_labels[_kind]: ETI_PALETTE[_key][1]
         for _kind, _key in (
             ("NEU", "neutral"),
-            ("wgBEN", "wgBEN"),
-            ("bgDEL", "bgDEL"),
+            ("BENwg", "BENwg"),
+            ("DELbg", "DELbg"),
             ("MLS", "MLS"),
         )
     }
@@ -1581,7 +1602,7 @@ def plot_detection_by_kind(
             n_boot=1000,
             seed=SEED,
             dodge=0.3,
-            height=2.4,
+            height=1.8,
             aspect=1.1,
             teeplot_outattrs={"screen": _screen.replace(" ", "-")},
             teeplot_outexclude=[
@@ -1599,9 +1620,7 @@ def plot_detection_by_kind(
             gap_points(*_g.axes.flat, _g.legend)
             _g.refline(y=ALPHA, color="gray", linestyle="--")
             _g.set(ylim=(-0.05, 1.05))
-            _g.set_axis_labels(
-                "Effect Size (%)", f"Detection Rate\n({_screen})"
-            )
+            _g.set_axis_labels("", f"Detection Rate\n({_screen})")
             _g.set_titles(col_template="subgrid {col_name}")
             for _a in _g.axes.flat:
                 plt.setp(
@@ -1610,7 +1629,7 @@ def plot_detection_by_kind(
                     ha="right",
                     rotation_mode="anchor",
                 )
-            top_legend(_g)
+            corner_xlabel(_g, right_legend(_g))
         plt.close("all")
     return
 
@@ -1663,26 +1682,7 @@ def plot_enrichment_by_kind(
                 ha="right",
                 rotation_mode="anchor",
             )
-        _legend = right_legend(_g)
-        # x axis label at bottom right, under the legend and level with the
-        # bottom of the tick labels
-        _renderer = _g.figure.canvas.get_renderer()
-        _ticks = [
-            _t.get_window_extent(_renderer).transformed(
-                _g.figure.transFigure.inverted()
-            )
-            for _t in _g.axes.flat[-2].get_xticklabels()
-        ]
-        _g.figure.text(
-            _legend.get_window_extent(_renderer)
-            .transformed(_g.figure.transFigure.inverted())
-            .x0,
-            min(_b.y0 for _b in _ticks),
-            "Effect\nSize (%)",
-            ha="left",
-            va="bottom",
-            fontsize=plt.rcParams["axes.labelsize"],
-        )
+        corner_xlabel(_g, right_legend(_g))
     plt.close("all")
     return
 
@@ -1690,10 +1690,10 @@ def plot_enrichment_by_kind(
 @app.cell(hide_code=True)
 def delimit_paired_freq_screen():
     mo.md(f"""
-    ## Paired Mutation-frequency Screen: MLS vs. bgDEL
+    ## Paired Mutation-frequency Screen: MLS vs. DELbg
 
-    MLS and between-group deleterious (`bgDEL`) sites at the same effect size share the same transmission reduction, so any difference in their MDC counts comes from the MLS site's within-host advantage.
-    Within each population, for each effect size, this screen tests whether the MLS site gives rise to more MDCs than the `bgDEL` site.
+    MLS and between-group deleterious (`DELbg`) sites at the same effect size share the same transmission reduction, so any difference in their MDC counts comes from the MLS site's within-host advantage.
+    Within each population, for each effect size, this screen tests whether the MLS site gives rise to more MDCs than the `DELbg` site.
     Under the null of equal rates, given $n = k_\\mathrm{{MLS}} + k_\\mathrm{{del}}$ MDCs in total, $k_\\mathrm{{MLS}} \\sim \\mathsf{{Binom}}(n, 1/2)$, so significance is the one-sided binomial survival probability of observing at least $k_\\mathrm{{MLS}}$ (the conditional exact test comparing two Poisson counts).
     Populations with no MDCs at either site count as not detected.
     As a null calibration, neutral sites are paired off and screened the same way.
@@ -1717,7 +1717,7 @@ def calc_paired_freq_screen(
         (
             label.split("=")[1],
             _site,
-            _site_of[f"{kind_labels['bgDEL']} s={label.split('=')[1]}"],
+            _site_of[f"{kind_labels['DELbg']} s={label.split('=')[1]}"],
         )
         for _site, label in site_labels.items()
         if label.startswith(kind_labels["MLS"])
@@ -1796,7 +1796,7 @@ def plot_paired_freq_detection(
         n_boot=1000,
         seed=SEED,
         dodge=0.3,
-        height=2.4,
+        height=1.8,
         aspect=1.1,
         teeplot_outattrs={"screen": "paired-frequency"},
         teeplot_outexclude=[
@@ -1815,8 +1815,8 @@ def plot_paired_freq_detection(
         _g.refline(y=ALPHA, color="gray", linestyle="--")
         _g.set(ylim=(-0.05, 1.05))
         _g.set_axis_labels(
-            "Effect Size (%)",
-            f"Detection Rate\nvs. {kind_labels['bgDEL']}",
+            "",
+            f"Detection Rate\nvs. {kind_labels['DELbg']}",
         )
         _g.set_titles(col_template="subgrid {col_name}")
         for _a in _g.axes.flat:
@@ -1826,7 +1826,7 @@ def plot_paired_freq_detection(
                 ha="right",
                 rotation_mode="anchor",
             )
-        top_legend(_g)
+        corner_xlabel(_g, right_legend(_g))
     plt.close("all")
     return
 
@@ -1834,7 +1834,7 @@ def plot_paired_freq_detection(
 @app.cell(hide_code=True)
 def delimit_del_enrichment():
     mo.md(r"""
-    MDC fold enrichment normalized to the between-group deleterious (`bgDEL`) site at the same effect size (rather than to neutral sites), i.e., $k_\mathrm{site} / k_\mathrm{bgDEL}$ within each population.
+    MDC fold enrichment normalized to the between-group deleterious (`DELbg`) site at the same effect size (rather than to neutral sites), i.e., $k_\mathrm{site} / k_\mathrm{DELbg}$ within each population.
     MLS sites above 1 reflect their within-host advantage over an otherwise-equal transmission cost.
     As a null reference, neutral sites are paired off and normalized to each other.
     Populations with no MDCs at the normalizing site are omitted.
@@ -1860,10 +1860,10 @@ def calc_del_enrichment(
             _kind,
             _effect,
             _site,
-            _site_of[f"{kind_labels['bgDEL']} s={_effect}"],
+            _site_of[f"{kind_labels['DELbg']} s={_effect}"],
         )
         for _site, _label in site_labels.items()
-        if _label.startswith((kind_labels["MLS"], kind_labels["wgBEN"]))
+        if _label.startswith((kind_labels["MLS"], kind_labels["BENwg"]))
         for _kind, _effect in [_label.split(" s=")]
     ] + [
         (kind_labels["NEU"], "neu", _a, _b)
@@ -1892,7 +1892,7 @@ def calc_del_enrichment(
     del_enrichment["fold_enrichment_del"] = (
         del_enrichment["k_site"] / del_enrichment["k_del"]
     )
-    del_kind_order = [_k for _k in kind_order if _k != kind_labels["bgDEL"]]
+    del_kind_order = [_k for _k in kind_order if _k != kind_labels["DELbg"]]
     del_enrichment.groupby(
         ["pop_size", "kind", "effect_size"], sort=False
     ).agg(
@@ -1929,9 +1929,9 @@ def plot_del_enrichment(
         estimator="median",
         errorbar=("pi", 50),
         dodge=0.3,
-        height=2.4,
+        height=1.8,
         aspect=1.1,
-        teeplot_outattrs={"normalization": "bgDEL"},
+        teeplot_outattrs={"normalization": "DELbg"},
         teeplot_outexclude=[
             "palette",
             "hue_order",
@@ -1947,8 +1947,8 @@ def plot_del_enrichment(
         _g.refline(y=1, color="gray", linestyle="--")
         _g.set(yscale="log")
         _g.set_axis_labels(
-            "Effect Size (%)",
-            f"MDC Fold Enrichment\nvs. {kind_labels['bgDEL']}\n(median, IQR)",
+            "",
+            f"MDC Enrichment\nvs. {kind_labels['DELbg']}\n(median, IQR)",
         )
         _g.set_titles(col_template="subgrid {col_name}")
         for _a in _g.axes.flat:
@@ -1958,7 +1958,7 @@ def plot_del_enrichment(
                 ha="right",
                 rotation_mode="anchor",
             )
-        top_legend(_g)
+        corner_xlabel(_g, right_legend(_g))
     plt.close("all")
     return
 
