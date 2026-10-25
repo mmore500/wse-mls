@@ -55,11 +55,11 @@ def gap_points(*artists):
                 continue
             _is_axes = hasattr(artist, "plot")
             if not _is_axes:
-                # legend entries: just a dot
-                line.set_linestyle("none")
+                # legend entries have no error bar: white ring around a dot
                 line.set_markerfacecolor(line.get_color())
+                line.set_markeredgecolor("white")
                 line.set_markersize(7)
-                line.set_markeredgewidth(0)
+                line.set_markeredgewidth(3)
                 continue
             # connecting line below a white gap
             line.set_zorder(1)
@@ -163,29 +163,8 @@ def right_legend(g):
         ),
         ncol=1,
         frameon=False,
-        handlelength=0.8,
         handletextpad=0.5,
         labelspacing=1.0,
-    )
-
-
-@app.function
-def corner_xlabel(g, legend, text="Effect\nSize (%)"):
-    """Place the x axis label at bottom right, left-aligned under the legend
-    and level with the bottom of the bottom-left panel's tick labels."""
-    _renderer = g.figure.canvas.get_renderer()
-    _to_fig = g.figure.transFigure.inverted()
-    _ticks = [
-        _t.get_window_extent(_renderer).transformed(_to_fig)
-        for _t in g.axes.flat[-2].get_xticklabels()
-    ]
-    g.figure.text(
-        legend.get_window_extent(_renderer).transformed(_to_fig).x0,
-        min(_b.y0 for _b in _ticks),
-        text,
-        ha="left",
-        va="bottom",
-        fontsize=plt.rcParams["axes.labelsize"],
     )
 
 
@@ -1122,7 +1101,7 @@ def plot_freq_enrichment(freq_screen, mutation_order, pop_size_order):
         _ax.axhline(1, color="gray", linestyle="--", zorder=0)
         _ax.set_yscale("log")
         _ax.set_xlabel("Mutation (site class and effect size)")
-        _ax.set_ylabel("MDC Enrichment\n(median, IQR)")
+        _ax.set_ylabel("MDC Fold Enrichment\n(median, IQR)")
         plt.setp(
             _ax.get_xticklabels(),
             rotation=30,
@@ -1602,7 +1581,7 @@ def plot_detection_by_kind(
             n_boot=1000,
             seed=SEED,
             dodge=0.3,
-            height=1.8,
+            height=2.4,
             aspect=1.1,
             teeplot_outattrs={"screen": _screen.replace(" ", "-")},
             teeplot_outexclude=[
@@ -1620,7 +1599,9 @@ def plot_detection_by_kind(
             gap_points(*_g.axes.flat, _g.legend)
             _g.refline(y=ALPHA, color="gray", linestyle="--")
             _g.set(ylim=(-0.05, 1.05))
-            _g.set_axis_labels("", f"Detection Rate\n({_screen})")
+            _g.set_axis_labels(
+                "Effect Size (%)", f"Detection Rate\n({_screen})"
+            )
             _g.set_titles(col_template="subgrid {col_name}")
             for _a in _g.axes.flat:
                 plt.setp(
@@ -1629,7 +1610,7 @@ def plot_detection_by_kind(
                     ha="right",
                     rotation_mode="anchor",
                 )
-            corner_xlabel(_g, right_legend(_g))
+            top_legend(_g)
         plt.close("all")
     return
 
@@ -1682,7 +1663,26 @@ def plot_enrichment_by_kind(
                 ha="right",
                 rotation_mode="anchor",
             )
-        corner_xlabel(_g, right_legend(_g))
+        _legend = right_legend(_g)
+        # x axis label at bottom right, under the legend and level with the
+        # bottom of the tick labels
+        _renderer = _g.figure.canvas.get_renderer()
+        _ticks = [
+            _t.get_window_extent(_renderer).transformed(
+                _g.figure.transFigure.inverted()
+            )
+            for _t in _g.axes.flat[-2].get_xticklabels()
+        ]
+        _g.figure.text(
+            _legend.get_window_extent(_renderer)
+            .transformed(_g.figure.transFigure.inverted())
+            .x0,
+            min(_b.y0 for _b in _ticks),
+            "Effect\nSize (%)",
+            ha="left",
+            va="bottom",
+            fontsize=plt.rcParams["axes.labelsize"],
+        )
     plt.close("all")
     return
 
@@ -1796,7 +1796,7 @@ def plot_paired_freq_detection(
         n_boot=1000,
         seed=SEED,
         dodge=0.3,
-        height=1.8,
+        height=2.4,
         aspect=1.1,
         teeplot_outattrs={"screen": "paired-frequency"},
         teeplot_outexclude=[
@@ -1815,7 +1815,7 @@ def plot_paired_freq_detection(
         _g.refline(y=ALPHA, color="gray", linestyle="--")
         _g.set(ylim=(-0.05, 1.05))
         _g.set_axis_labels(
-            "",
+            "Effect Size (%)",
             f"Detection Rate\nvs. {kind_labels['bgDEL']}",
         )
         _g.set_titles(col_template="subgrid {col_name}")
@@ -1826,7 +1826,7 @@ def plot_paired_freq_detection(
                 ha="right",
                 rotation_mode="anchor",
             )
-        corner_xlabel(_g, right_legend(_g))
+        top_legend(_g)
     plt.close("all")
     return
 
@@ -1929,7 +1929,7 @@ def plot_del_enrichment(
         estimator="median",
         errorbar=("pi", 50),
         dodge=0.3,
-        height=1.8,
+        height=2.4,
         aspect=1.1,
         teeplot_outattrs={"normalization": "bgDEL"},
         teeplot_outexclude=[
@@ -1947,8 +1947,8 @@ def plot_del_enrichment(
         _g.refline(y=1, color="gray", linestyle="--")
         _g.set(yscale="log")
         _g.set_axis_labels(
-            "",
-            f"MDC Enrichment\nvs. {kind_labels['bgDEL']}\n(median, IQR)",
+            "Effect Size (%)",
+            f"MDC Fold Enrichment\nvs. {kind_labels['bgDEL']}\n(median, IQR)",
         )
         _g.set_titles(col_template="subgrid {col_name}")
         for _a in _g.axes.flat:
@@ -1958,7 +1958,7 @@ def plot_del_enrichment(
                 ha="right",
                 rotation_mode="anchor",
             )
-        corner_xlabel(_g, right_legend(_g))
+        top_legend(_g)
     plt.close("all")
     return
 
