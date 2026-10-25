@@ -26,6 +26,8 @@ with app.setup:
     from pylib import osf_fetch, percentileofscore_grouped
 
     warnings.filterwarnings("ignore", category=DeprecationWarning)
+    # Computer Modern math, e.g., for italic site class qualifiers
+    plt.rcParams["mathtext.fontset"] = "cm"
 
     OSF_SLUG = "6pa9j"
     NUM_SITES = 64
@@ -300,8 +302,8 @@ def tabulate_effect_sizes(config_df):
     # effect below, with null (crossed circle) for no effect
     kind_labels = {
         "MLS": r"MLS$|^{-}_{+}$",
-        "DELbg": r"DELbg$|^{-}_{\varnothing}$",
-        "BENwg": r"BENwg$|^{\varnothing}_{+}$",
+        "DELbg": r"DEL$\mathit{bg}|^{-}_{\varnothing}$",
+        "BENwg": r"BEN$\mathit{wg}|^{\varnothing}_{+}$",
         "NEU": r"NEU$|^{\varnothing}_{\varnothing}$",
     }
     site_labels = pd.Series(
@@ -1460,7 +1462,7 @@ def plot_detection_by_kind(
             seed=SEED,
             dodge=0.3,
             height=1.8,
-            aspect=1.1,
+            aspect=1.6,
             teeplot_outattrs={"screen": _screen.replace(" ", "-")},
             teeplot_outexclude=[
                 "palette",
@@ -1516,7 +1518,7 @@ def plot_enrichment_by_kind(
         errorbar=("pi", 50),
         dodge=0.3,
         height=1.8,
-        aspect=1.1,
+        aspect=1.6,
         teeplot_outexclude=[
             "palette",
             "hue_order",
