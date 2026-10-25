@@ -26,6 +26,8 @@ with app.setup:
     from pylib import osf_fetch, percentileofscore_grouped
 
     warnings.filterwarnings("ignore", category=DeprecationWarning)
+    # Computer Modern math, e.g., for italic site class qualifiers
+    plt.rcParams["mathtext.fontset"] = "cm"
 
     OSF_SLUGS = ("jvwun", "a6r7h", "5s3ex", "z4fq9")
     NUM_SITES = 16
@@ -384,8 +386,8 @@ def tabulate_effect_sizes(config_df):
     # effect below, with null (crossed circle) for no effect
     kind_labels = {
         "MLS": r"MLS$|^{-}_{+}$",
-        "DELbg": r"DELbg$|^{-}_{\varnothing}$",
-        "BENwg": r"BENwg$|^{\varnothing}_{+}$",
+        "DELbg": r"DEL$\mathit{bg}|^{-}_{\varnothing}$",
+        "BENwg": r"BEN$\mathit{wg}|^{\varnothing}_{+}$",
         "NEU": r"NEU$|^{\varnothing}_{\varnothing}$",
     }
     _kind_labels = {
