@@ -72,19 +72,32 @@ def top_legend(g, title=None):
     _handles = [*g.legend.legend_handles]
     _labels = [_text.get_text() for _text in g.legend.get_texts()]
     g.legend.remove()
+    g._legend = None
+    # reclaim the space reserved for the old side legend
+    g.tight_layout()
     if title is not None:
         _handles.insert(0, plt.Line2D([], [], linestyle="none"))
         _labels.insert(0, title)
-    g.figure.legend(
+    # center over the panels, rather than the whole figure
+    _boxes = [_ax.get_position() for _ax in g.axes.flat]
+    _center = (min(_b.x0 for _b in _boxes) + max(_b.x1 for _b in _boxes)) / 2
+    _legend = g.figure.legend(
         _handles,
         _labels,
         loc="lower center",
-        bbox_to_anchor=(0.5, 1.0),
+        bbox_to_anchor=(_center, 1.0),
         ncol=len(_handles),
         frameon=False,
-        handletextpad=0.4,
-        columnspacing=1.2,
+        handletextpad=0.5,
+        columnspacing=2.5,
     )
+    if title is not None:
+        # collapse the dummy entry's empty handle slot, so the title sits
+        # flush and the legend's visible content is centered
+        _first_row = _legend._legend_handle_box.get_children()[
+            0
+        ].get_children()[0]
+        _first_row.get_children()[0].width = 0
 
 
 @app.cell(hide_code=True)
