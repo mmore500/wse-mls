@@ -32,6 +32,13 @@ with app.setup:
     ALPHA = 0.05
     MAX_TREE_LEAVES = 4000
     SEED = 1
+    # dark, middle, and light shades per site class; plots use the middle
+    ETI_PALETTE = {
+        "MLS": ["#004C7A", "#0072B2", "#8FC3E6"],
+        "wgBEN": ["#00664F", "#009E73", "#8ED6BE"],
+        "bgDEL": ["#9A3F00", "#D55E00", "#F2B48A"],
+        "neutral": ["#6E6E6E", "#A6A6A6", "#DADADA"],
+    }
 
 
 @app.function
@@ -45,24 +52,32 @@ def gap_points(*artists):
             if line.get_marker() in ("None", None, ""):
                 line.set_zorder(3)
                 continue
-            # white ring clears a gap around a small colored core
+            # white ring clears a gap around a small colored core; legend
+            # entries (which have no error bar) get a larger core
+            _is_axes = hasattr(artist, "plot")
             line.set_markerfacecolor(line.get_color())
             line.set_markeredgecolor("white")
-            line.set_markersize(5)
-            line.set_markeredgewidth(4)
+            line.set_markersize(5 if _is_axes else 7)
+            line.set_markeredgewidth(4 if _is_axes else 3)
             line.set_zorder(2)
             # pinprick dot marks the position above the error bar
-            if hasattr(artist, "plot") and len(line.get_xdata()):
+            if _is_axes and len(line.get_xdata()):
                 artist.plot(
                     line.get_xdata(),
                     line.get_ydata(),
                     linestyle="none",
                     marker="o",
-                    markersize=3.5,
+                    markersize=2.2,
                     markeredgewidth=0,
                     color=line.get_color(),
                     zorder=4,
                 )
+
+
+@app.function
+def effect_pct(effect):
+    """Express an effect size label as a percent, passing "neutral" through."""
+    return effect if effect == "neutral" else f"{float(effect) * 100:g}"
 
 
 @app.function
@@ -1443,7 +1458,7 @@ def tabulate_by_kind(fitness_detection, freq_screen, kind_labels):
         _parts = df["mutation"].str.extract(r"^(.+) s=(\S+)$")
         return df.assign(
             kind=_parts[0].fillna(kind_labels["NEU"]),
-            effect_size=_parts[1].fillna("neutral"),
+            effect_size=_parts[1].fillna("neutral").map(effect_pct),
         )
 
     by_kind = pd.concat(
@@ -1465,15 +1480,21 @@ def tabulate_by_kind(fitness_detection, freq_screen, kind_labels):
     )
     kind_order = [
         kind_labels[_kind]
-        for _kind in ("MLS", "wgBEN", "bgDEL", "NEU")
+        for _kind in ("NEU", "wgBEN", "bgDEL", "MLS")
         if kind_labels[_kind] in set(by_kind["kind"])
     ]
     effect_size_order = ["neutral"] + sorted(
         set(by_kind["effect_size"]) - {"neutral"}, key=float
     )
-    kind_palette = dict(
-        zip(kind_order, [*sns.color_palette("colorblind", 3), "gray"])
-    )
+    kind_palette = {
+        kind_labels[_kind]: ETI_PALETTE[_key][1]
+        for _kind, _key in (
+            ("NEU", "neutral"),
+            ("wgBEN", "wgBEN"),
+            ("bgDEL", "bgDEL"),
+            ("MLS", "MLS"),
+        )
+    }
     freq_by_kind = freq_screen.pipe(_split_mutation)
     by_kind.groupby(["screen", "pop_size", "kind", "effect_size"], sort=False)[
         "detected"
@@ -1525,7 +1546,9 @@ def plot_detection_by_kind(
             gap_points(*_g.axes.flat, _g.legend)
             _g.refline(y=ALPHA, color="gray", linestyle="--")
             _g.set(ylim=(-0.05, 1.05))
-            _g.set_axis_labels("Effect Size", f"Detection Rate\n({_screen})")
+            _g.set_axis_labels(
+                "Effect Size (%)", f"Detection Rate\n({_screen})"
+            )
             _g.set_titles(col_template="subgrid {col_name}")
             for _a in _g.axes.flat:
                 plt.setp(
@@ -1578,7 +1601,9 @@ def plot_enrichment_by_kind(
     ) as _g:
         gap_points(*_g.axes.flat, _g.legend)
         _g.refline(y=1, color="gray", linestyle="--")
-        _g.set_axis_labels("Effect Size", "MDC Fold Enrichment\n(median, IQR)")
+        _g.set_axis_labels(
+            "Effect Size (%)", "MDC Fold Enrichment\n(median, IQR)"
+        )
         _g.set_titles(col_template="subgrid {col_name}")
         for _a in _g.axes.flat:
             plt.setp(
@@ -1635,7 +1660,7 @@ def calc_paired_freq_screen(
             pd.DataFrame(
                 {
                     "pop_code": _counts.index,
-                    "effect_size": _effect,
+                    "effect_size": effect_pct(_effect),
                     "kind": (
                         (
                             kind_labels["NEU"]
@@ -1691,11 +1716,8 @@ def plot_paired_freq_detection(
         y="detected",
         order=effect_size_order,
         hue="kind",
-        hue_order=[kind_labels["MLS"], kind_labels["NEU"]],
-        palette={
-            kind_labels["MLS"]: kind_palette[kind_labels["MLS"]],
-            kind_labels["NEU"]: "gray",
-        },
+        hue_order=[kind_labels["NEU"], kind_labels["MLS"]],
+        palette=kind_palette,
         col="pop_size",
         col_order=pop_size_order,
         col_wrap=2,
@@ -1723,7 +1745,7 @@ def plot_paired_freq_detection(
         _g.refline(y=ALPHA, color="gray", linestyle="--")
         _g.set(ylim=(-0.05, 1.05))
         _g.set_axis_labels(
-            "Effect Size",
+            "Effect Size (%)",
             f"Detection Rate\nvs. {kind_labels['bgDEL']}",
         )
         _g.set_titles(col_template="subgrid {col_name}")
@@ -1783,7 +1805,7 @@ def calc_del_enrichment(
                 {
                     "pop_code": _counts.index,
                     "kind": _kind,
-                    "effect_size": _effect,
+                    "effect_size": effect_pct(_effect),
                     "site": _site,
                     "k_site": _counts[_site].to_numpy(),
                     "k_del": _counts[_norm].to_numpy(),
@@ -1855,7 +1877,7 @@ def plot_del_enrichment(
         _g.refline(y=1, color="gray", linestyle="--")
         _g.set(yscale="log")
         _g.set_axis_labels(
-            "Effect Size",
+            "Effect Size (%)",
             f"MDC Fold Enrichment\nvs. {kind_labels['bgDEL']}\n(median, IQR)",
         )
         _g.set_titles(col_template="subgrid {col_name}")
