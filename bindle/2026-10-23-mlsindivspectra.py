@@ -1582,5 +1582,120 @@ def plot_paired_freq_detection(
     return
 
 
+@app.cell(hide_code=True)
+def delimit_del_enrichment():
+    mo.md(r"""
+    MDC fold enrichment normalized to the between-host deleterious site at the same effect size (rather than to neutral sites), i.e., $k_\mathrm{site} / k_\mathrm{del}$ within each population.
+    MLS sites above 1 reflect their within-host advantage over an otherwise-equal transmission cost.
+    As a null reference, neutral sites are paired off and normalized to each other.
+    Populations with no MDCs at the normalizing site are omitted.
+    Points give medians and error bars interquartile ranges over populations.
+    """)
+    return
+
+
+@app.cell
+def calc_del_enrichment(
+    background_sites,
+    freq_screen,
+    kind_order,
+    site_labels,
+):
+    _counts = freq_screen.pivot(
+        index="pop_code", columns="site", values="mdc_count"
+    )
+    _site_of = {label: site for site, label in site_labels.items()}
+    _pairs = [
+        (_kind, _effect, _site, _site_of[f"del s={_effect}"])
+        for _site, _label in site_labels.items()
+        if _label.startswith(("MLS ", "ben "))
+        for _kind, _effect in [_label.split(" s=")]
+    ] + [
+        ("Neutral", "neutral", _a, _b)
+        for _a, _b in zip(background_sites[::2], background_sites[1::2])
+    ]
+    del_enrichment = pd.concat(
+        [
+            pd.DataFrame(
+                {
+                    "pop_code": _counts.index,
+                    "kind": _kind,
+                    "effect_size": _effect,
+                    "site": _site,
+                    "k_site": _counts[_site].to_numpy(),
+                    "k_del": _counts[_norm].to_numpy(),
+                },
+            )
+            for _kind, _effect, _site, _norm in _pairs
+        ],
+        ignore_index=True,
+    ).merge(
+        freq_screen[["pop_code", "pop_size"]].drop_duplicates(),
+        on="pop_code",
+    )
+    del_enrichment = del_enrichment[del_enrichment["k_del"] > 0].copy()
+    del_enrichment["fold_enrichment_del"] = (
+        del_enrichment["k_site"] / del_enrichment["k_del"]
+    )
+    del_kind_order = [_k for _k in kind_order if _k != "del"]
+    del_enrichment.groupby(
+        ["pop_size", "kind", "effect_size"], sort=False
+    ).agg(
+        num_populations=("pop_code", "nunique"),
+        fold_enrichment_del_median=("fold_enrichment_del", "median"),
+    ).unstack(
+        "pop_size"
+    )
+    return del_enrichment, del_kind_order
+
+
+@app.cell
+def plot_del_enrichment(
+    del_enrichment,
+    del_kind_order,
+    effect_size_order,
+    kind_palette,
+    pop_size_order,
+):
+    with tp.teed(
+        sns.catplot,
+        data=del_enrichment,
+        x="effect_size",
+        y="fold_enrichment_del",
+        order=effect_size_order,
+        hue="kind",
+        hue_order=del_kind_order,
+        palette=kind_palette,
+        col="pop_size",
+        col_order=pop_size_order,
+        kind="point",
+        estimator="median",
+        errorbar=("pi", 50),
+        dodge=0.3,
+        height=2.4,
+        aspect=0.9,
+        teeplot_outattrs={"normalization": "del"},
+        teeplot_outexclude=[
+            "palette",
+            "hue_order",
+            "col_order",
+            "dodge",
+            "order",
+        ],
+        teeplot_show=True,
+        teeplot_subdir=pathlib.Path(__file__).stem,
+    ) as _g:
+        _g.refline(y=1, color="gray", linestyle="--")
+        _g.set(yscale="log")
+        _g.set_axis_labels(
+            "Effect Size", "MDC Fold Enrichment vs del\n(median, IQR)"
+        )
+        _g.set_titles(col_template="subgrid {col_name}")
+        _g.tick_params(axis="x", rotation=30)
+        _g.legend.set_title("Site Class")
+    plt.close("all")
+    return
+
+
 if __name__ == "__main__":
     app.run()
