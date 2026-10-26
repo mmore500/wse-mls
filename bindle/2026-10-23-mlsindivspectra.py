@@ -1742,9 +1742,9 @@ def delimit_pvalue_by_kind():
     mo.md(f"""
     ## Detection Strength by Site Class
 
-    Screen p-values on a log scale, descending from $p = 1$ at top so stronger evidence plots lower.
+    Screen p-values on a log scale, inverted so stronger evidence plots higher, with each panel scaled independently.
     Points are medians over populations, with error bars spanning the interquartile range; the dashed line marks $\\alpha = {ALPHA}$.
-    Populations where a site produced no MDCs (so the screen could not run) count as $p = 1$, and p-values below $10^{{-9}}$ are clipped to $10^{{-9}}$.
+    Populations where a site produced no MDCs (so the screen could not run) count as $p = 1$, and $p = 0$ underflows are floored at the smallest positive double.
     Fitness screens shown use all MDCs and `epoch100` normalization.
     """)
     return
@@ -1765,7 +1765,9 @@ def plot_pvalue_by_kind(
     }
     for _screen, _name in _screen_names.items():
         _df = by_kind[by_kind["screen"] == _screen].assign(
-            p_value=lambda df: df["p_value"].fillna(1.0).clip(lower=1e-9),
+            p_value=lambda df: df["p_value"]
+            .fillna(1.0)
+            .clip(lower=np.finfo(float).tiny),
         )
         with tp.teed(
             sns.catplot,
@@ -1786,6 +1788,7 @@ def plot_pvalue_by_kind(
             height=1.5,
             aspect=1.1,
             log_scale=(False, True),
+            sharey=False,
             teeplot_outattrs={"screen": _screen.replace(" ", "-")},
             teeplot_outexclude=[
                 "palette",
@@ -1795,18 +1798,17 @@ def plot_pvalue_by_kind(
                 "dodge",
                 "order",
                 "log_scale",
+                "sharey",
             ],
             teeplot_show=True,
             teeplot_subdir=pathlib.Path(__file__).stem,
         ) as _g:
             gap_points(*_g.axes.flat, _g.legend)
             _g.refline(y=ALPHA, color="gray", linestyle="--")
-            # p = 1 at top, descending to the 1e-9 clip floor, with a
-            # little padding so edge markers aren't cut off
-            _g.set(
-                ylim=(10**-9.4, 10**0.2),
-                yticks=[1, 1e-3, 1e-6, 1e-9],
-            )
+            # per-panel range from p = 1 at bottom up to the smallest p
+            # (at least alpha / 10), so stronger evidence plots higher
+            for _a in _g.axes.flat:
+                _a.set_ylim(1.0, min(*_a.get_ylim(), ALPHA / 10))
             _g.set_axis_labels("", f"p-value\n({_name})")
             _g.set_titles(col_template="subgrid {col_name}")
             for _a in _g.axes.flat:
