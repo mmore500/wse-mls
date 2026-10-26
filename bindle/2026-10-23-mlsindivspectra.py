@@ -1541,13 +1541,18 @@ def tabulate_by_kind(fitness_detection, freq_screen, kind_labels):
 
     by_kind = pd.concat(
         [
-            freq_screen.assign(screen="frequency"),
+            freq_screen.assign(
+                screen="frequency", p_value=freq_screen["poisson_sf_p"]
+            ),
             *(
                 fitness_detection[
                     (fitness_detection["normalization"] == "epoch100")
                     & (fitness_detection["stat"] == _stat)
                     & (fitness_detection["subset"] == _subset)
-                ].assign(screen=f"fitness {_stat} {_subset}")
+                ].assign(
+                    screen=f"fitness {_stat} {_subset}",
+                    p_value=lambda df: df["p_mw_less"],
+                )
                 for _stat in ("carriers", "clade_duration")
                 for _subset in ("all", "inner_f75")
             ),
@@ -1562,6 +1567,7 @@ def tabulate_by_kind(fitness_detection, freq_screen, kind_labels):
             "mutation",
             "detected",
             "site_mean_pct",
+            "p_value",
         ]
     ].pipe(
         _split_mutation
@@ -1717,6 +1723,93 @@ def plot_fitness_pct_by_kind(
                 "",
                 f"{_stat_names[_stat]}\nPercentile\n(median, IQR)",
             )
+            _g.set_titles(col_template="subgrid {col_name}")
+            for _a in _g.axes.flat:
+                plt.setp(
+                    _a.get_xticklabels(),
+                    rotation=90,
+                    ha="right",
+                    va="center",
+                    rotation_mode="anchor",
+                )
+            corner_xlabel(_g, right_legend(_g))
+        plt.close("all")
+    return
+
+
+@app.cell(hide_code=True)
+def delimit_pvalue_by_kind():
+    mo.md(f"""
+    ## Detection Strength by Site Class
+
+    Screen p-values on a log scale, inverted so stronger evidence plots higher, with each panel scaled independently.
+    Points are medians over populations, with error bars spanning the interquartile range; the dashed line marks $\\alpha = {ALPHA}$.
+    Populations where a site produced no MDCs (so the screen could not run) count as $p = 1$, and $p = 0$ underflows are floored at the smallest positive double.
+    Fitness screens shown use all MDCs and `epoch100` normalization.
+    """)
+    return
+
+
+@app.cell
+def plot_pvalue_by_kind(
+    by_kind,
+    effect_size_order,
+    kind_order,
+    kind_palette,
+    pop_size_order,
+):
+    _screen_names = {
+        "frequency": "MDC Frequency",
+        "fitness carriers all": "Clade Size",
+        "fitness clade_duration all": "Clade Duration",
+    }
+    for _screen, _name in _screen_names.items():
+        _df = by_kind[by_kind["screen"] == _screen].assign(
+            p_value=lambda df: df["p_value"]
+            .fillna(1.0)
+            .clip(lower=np.finfo(float).tiny),
+        )
+        with tp.teed(
+            sns.catplot,
+            data=_df,
+            x="effect_size",
+            y="p_value",
+            order=effect_size_order,
+            hue="kind",
+            hue_order=kind_order,
+            palette=kind_palette,
+            col="pop_size",
+            col_order=pop_size_order,
+            col_wrap=2,
+            kind="point",
+            estimator="median",
+            errorbar=("pi", 50),
+            dodge=0.3,
+            height=1.5,
+            aspect=1.1,
+            log_scale=(False, True),
+            sharey=False,
+            teeplot_outattrs={"screen": _screen.replace(" ", "-")},
+            teeplot_outexclude=[
+                "palette",
+                "hue_order",
+                "col_order",
+                "col_wrap",
+                "dodge",
+                "order",
+                "log_scale",
+                "sharey",
+            ],
+            teeplot_show=True,
+            teeplot_subdir=pathlib.Path(__file__).stem,
+        ) as _g:
+            gap_points(*_g.axes.flat, _g.legend)
+            _g.refline(y=ALPHA, color="gray", linestyle="--")
+            # per-panel range from p = 1 at bottom up to the smallest p
+            # (at least alpha / 10), so stronger evidence plots higher
+            for _a in _g.axes.flat:
+                _a.set_ylim(1.0, min(*_a.get_ylim(), ALPHA / 10))
+            _g.set_axis_labels("", f"p-value\n({_name})")
             _g.set_titles(col_template="subgrid {col_name}")
             for _a in _g.axes.flat:
                 plt.setp(
