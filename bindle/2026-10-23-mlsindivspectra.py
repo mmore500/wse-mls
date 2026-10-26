@@ -1553,7 +1553,17 @@ def tabulate_by_kind(fitness_detection, freq_screen, kind_labels):
             ),
         ],
         ignore_index=True,
-    )[["screen", "pop_code", "pop_size", "site", "mutation", "detected"]].pipe(
+    )[
+        [
+            "screen",
+            "pop_code",
+            "pop_size",
+            "site",
+            "mutation",
+            "detected",
+            "site_mean_pct",
+        ]
+    ].pipe(
         _split_mutation
     )
     kind_order = [
@@ -1625,6 +1635,88 @@ def plot_detection_by_kind(
             _g.refline(y=ALPHA, color="gray", linestyle="--")
             _g.set(ylim=(-0.05, 1.05))
             _g.set_axis_labels("", f"Detection Rate\n({_screen})")
+            _g.set_titles(col_template="subgrid {col_name}")
+            for _a in _g.axes.flat:
+                plt.setp(
+                    _a.get_xticklabels(),
+                    rotation=90,
+                    ha="right",
+                    va="center",
+                    rotation_mode="anchor",
+                )
+            corner_xlabel(_g, right_legend(_g))
+        plt.close("all")
+    return
+
+
+@app.cell(hide_code=True)
+def delimit_fitness_pct_by_kind():
+    mo.md(r"""
+    ## MDC Size and Duration by Site Class
+
+    The fitness screen's underlying measurement: each site's mean MDC percentile for clade size (`carriers`) and clade duration, ranked against background (neutral) MDCs within the same population and 100-update origin epoch.
+    All MDCs are included.
+    The dashed line at 50 marks parity with background; lower values mean smaller or shorter-lived clades.
+    Points are medians over populations, with error bars spanning the interquartile range.
+    """)
+    return
+
+
+@app.cell
+def plot_fitness_pct_by_kind(
+    by_kind,
+    effect_size_order,
+    kind_order,
+    kind_palette,
+    pop_size_order,
+):
+    _stat_names = {
+        "carriers": "Clade Size",
+        "clade_duration": "Clade Duration",
+    }
+    # all MDCs subset only
+    _fitness = by_kind[
+        by_kind["screen"].str.startswith("fitness ")
+        & by_kind["screen"].str.endswith(" all")
+    ]
+    for _screen, _df in _fitness.groupby("screen", sort=False):
+        _stat = _screen.split(" ")[1]
+        with tp.teed(
+            sns.catplot,
+            data=_df.dropna(subset=["site_mean_pct"]),
+            x="effect_size",
+            y="site_mean_pct",
+            order=effect_size_order,
+            hue="kind",
+            hue_order=kind_order,
+            palette=kind_palette,
+            col="pop_size",
+            col_order=pop_size_order,
+            col_wrap=2,
+            kind="point",
+            estimator="median",
+            errorbar=("pi", 50),
+            dodge=0.3,
+            height=1.5,
+            aspect=1.1,
+            teeplot_outattrs={"screen": _screen.replace(" ", "-")},
+            teeplot_outexclude=[
+                "palette",
+                "hue_order",
+                "col_order",
+                "col_wrap",
+                "dodge",
+                "order",
+            ],
+            teeplot_show=True,
+            teeplot_subdir=pathlib.Path(__file__).stem,
+        ) as _g:
+            gap_points(*_g.axes.flat, _g.legend)
+            _g.refline(y=50, color="gray", linestyle="--")
+            _g.set_axis_labels(
+                "",
+                f"{_stat_names[_stat]}\nPercentile\n(median, IQR)",
+            )
             _g.set_titles(col_template="subgrid {col_name}")
             for _a in _g.axes.flat:
                 plt.setp(
