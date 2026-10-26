@@ -525,9 +525,31 @@ def split_populations(config_df, phylo_pruned):
 
 @app.cell
 def tabulate_populations(config_df, phylo_split):
-    _config = config_df.select(
-        "config", "nRow", "nCol", "nRowSubgrid", "nColSubgrid", "tilePopSize"
-    ).to_pandas()
+    # cast grid dimensions from unsigned dtypes, which would wrap on the
+    # negation in the ceiling division below
+    _config = (
+        config_df.select(
+            "config",
+            "nRow",
+            "nCol",
+            "nRowSubgrid",
+            "nColSubgrid",
+            "tilePopSize",
+        )
+        .to_pandas()
+        .astype(
+            {
+                col: "int64"
+                for col in (
+                    "nRow",
+                    "nCol",
+                    "nRowSubgrid",
+                    "nColSubgrid",
+                    "tilePopSize",
+                )
+            },
+        )
+    )
     _leaves = phylo_split[phylo_split["is_leaf"]]
     populations = (
         _leaves.groupby("pop_code")
