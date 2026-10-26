@@ -26,171 +26,12 @@ with app.setup:
     from pylib import osf_fetch, percentileofscore_grouped
 
     warnings.filterwarnings("ignore", category=DeprecationWarning)
-    # Computer Modern math, e.g., for italic site class qualifiers
-    plt.rcParams["mathtext.fontset"] = "cm"
 
-    OSF_SLUGS = ("s9xzw", "59kyt", "9f7ht", "5ht3r")
+    OSF_SLUGS = ("kv2wy", "dz4n7", "ayht2", "u4qzk")
     NUM_SITES = 16
     ALPHA = 0.05
     MAX_TREE_LEAVES = 4000
     SEED = 1
-    # dark, middle, and light shades per site class; plots use the middle
-    ETI_PALETTE = {
-        "MLS": ["#004C7A", "#0072B2", "#8FC3E6"],
-        "BENwg": ["#00664F", "#009E73", "#8ED6BE"],
-        "DELbg": ["#9A3F00", "#D55E00", "#F2B48A"],
-        "neutral": ["#6E6E6E", "#A6A6A6", "#DADADA"],
-    }
-
-
-@app.function
-def gap_points(*artists):
-    """Draw point-plot markers as gaps in their connecting lines, layered as:
-    connecting line, white gap, error bar, white halo, then a small dot
-    marking each position."""
-    for artist in artists:
-        if artist is None:
-            continue
-        for line in [*artist.get_lines()]:
-            if line.get_marker() in ("None", None, ""):
-                line.set_zorder(3)  # error bars (and reference lines)
-                continue
-            _is_axes = hasattr(artist, "plot")
-            if not _is_axes:
-                # legend entries: just a dot
-                line.set_linestyle("none")
-                line.set_markerfacecolor(line.get_color())
-                line.set_markersize(7)
-                line.set_markeredgewidth(0)
-                continue
-            # connecting line below a white gap
-            line.set_zorder(1)
-            if not len(line.get_xdata()):
-                continue
-            _xy = line.get_xdata(), line.get_ydata()
-            artist.plot(
-                *_xy,
-                linestyle="none",
-                marker="o",
-                markersize=9,
-                markeredgewidth=0,
-                color="white",
-                zorder=2,
-            )
-            line.set_marker("None")
-            # white halo, then small dot, above the error bar
-            for _size, _color, _z in (
-                (3.6, "white", 4),
-                (2.2, line.get_color(), 5),
-            ):
-                artist.plot(
-                    *_xy,
-                    linestyle="none",
-                    marker="o",
-                    markersize=_size,
-                    markeredgewidth=0,
-                    color=_color,
-                    zorder=_z,
-                )
-
-
-@app.function
-def effect_pct(effect):
-    """Express an effect size label as a percent, passing "neu" through."""
-    return (
-        effect
-        if effect in ("neu", "neutral")
-        else f"{float(effect) * 100:.1f}"
-    )
-
-
-@app.function
-def top_legend(g, title=None):
-    """Replace a FacetGrid's legend with a single-row legend above the plot,
-    with the title (if any) as a leading dummy entry."""
-    _handles = [*g.legend.legend_handles]
-    _labels = [_text.get_text() for _text in g.legend.get_texts()]
-    g.legend.remove()
-    g._legend = None
-    # reclaim the space reserved for the old side legend
-    g.tight_layout()
-    if title is not None:
-        _handles.insert(0, plt.Line2D([], [], linestyle="none"))
-        _labels.insert(0, title)
-    # center over the panels, rather than the whole figure
-    _boxes = [_ax.get_position() for _ax in g.axes.flat]
-    _left = min(_b.x0 for _b in _boxes)
-    _right = max(_b.x1 for _b in _boxes)
-    _renderer = g.figure.canvas.get_renderer()
-    _span = (_right - _left) * g.figure.bbox.width
-    # tighten entry spacing as needed so the legend doesn't overhang
-    for _spacing in (2.5, 2.0, 1.5, 1.2, 1.0, 0.8, 0.6, 0.4):
-        _legend = g.figure.legend(
-            _handles,
-            _labels,
-            loc="lower center",
-            bbox_to_anchor=((_left + _right) / 2, 1.0),
-            ncol=len(_handles),
-            frameon=False,
-            handletextpad=0.5,
-            columnspacing=_spacing,
-        )
-        if title is not None:
-            # collapse the dummy entry's empty handle slot, so the title
-            # sits flush and the legend's visible content is centered
-            _first_row = _legend._legend_handle_box.get_children()[
-                0
-            ].get_children()[0]
-            _first_row.get_children()[0].width = 0
-        if _legend.get_window_extent(_renderer).width <= _span:
-            break
-        _legend.remove()
-
-
-@app.function
-def right_legend(g):
-    """Replace a FacetGrid's legend with a single-column legend to the right
-    of the panels, vertically centered on them."""
-    _handles = [*g.legend.legend_handles]
-    _labels = [_text.get_text() for _text in g.legend.get_texts()]
-    g.legend.remove()
-    g._legend = None
-    g.tight_layout()
-    _boxes = [_ax.get_position() for _ax in g.axes.flat]
-    return g.figure.legend(
-        _handles,
-        _labels,
-        loc="center left",
-        bbox_to_anchor=(
-            max(_b.x1 for _b in _boxes) + 0.02,
-            (min(_b.y0 for _b in _boxes) + max(_b.y1 for _b in _boxes)) / 2,
-        ),
-        ncol=1,
-        frameon=False,
-        handlelength=0.8,
-        handletextpad=0.5,
-        labelspacing=1.0,
-    )
-
-
-@app.function
-def corner_xlabel(g, legend, text="Effect\nSize (%)"):
-    """Place the x axis label at bottom right, left-aligned under the legend
-    and level with the bottom of the bottom-left panel's tick labels."""
-    _renderer = g.figure.canvas.get_renderer()
-    _to_fig = g.figure.transFigure.inverted()
-    _ticks = [
-        _t.get_window_extent(_renderer).transformed(_to_fig)
-        for _t in g.axes.flat[-2].get_xticklabels()
-    ]
-    g.figure.text(
-        legend.get_window_extent(_renderer).transformed(_to_fig).x0,
-        min(_b.y0 for _b in _ticks),
-        text,
-        ha="left",
-        va="bottom",
-        fontsize=plt.rcParams["axes.labelsize"],
-    )
 
 
 @app.cell(hide_code=True)
@@ -214,34 +55,31 @@ def do_watermark():
 @app.cell(hide_code=True)
 def describe_notebook():
     mo.md(f"""
-    # MLS Spectrum Subgrid Fossils: Detectability by Population Size, Effect Size, and Site Class
+    # MLS Spectra Subgrid Fossils: Detectability by Population Size, Effect Size, and Site Class
 
-    Applies the phylogeny-based multilevel selection (MLS) screen from *Extending a Phylogeny-based Method for Detecting Signatures of Multi-level Selection for Applications in Artificial Life* (ISAL 2025, <https://doi.org/10.1162/ISAL.a.916>; code at <https://github.com/mmore500/multilevel-selection-concept>) to wafer-scale evolution data, following `2026-10-18-mls-spectrum-subgrid-fossils` and `2026-10-23-mlsindivspectra`.
+    Applies the phylogeny-based multilevel selection (MLS) screen from *Extending a Phylogeny-based Method for Detecting Signatures of Multi-level Selection for Applications in Artificial Life* (ISAL 2025, <https://doi.org/10.1162/ISAL.a.916>; code at <https://github.com/mmore500/multilevel-selection-concept>) to wafer-scale evolution data, following `2026-10-19-mls-indiv-ratematched-fossils-reservoir`.
 
-    Data were generated by [`wse-async-ga` `wsclust/2026-10-25-mls-spectrum-subgrid-fossils`](https://github.com/mmore500/wse-async-ga/tree/79a94ab1f78e7b1239ecb2bb50ec3fd8809055e0/wsclust/2026-10-25-mls-spectrum-subgrid-fossils) (added in [mmore500/wse-async-ga#92](https://github.com/mmore500/wse-async-ga/pull/92)) and are hosted at {", ".join(f"<https://osf.io/{slug}>" for slug in OSF_SLUGS)}.
-    Each file is one run's minified hstrat-reconstructed phylogeny (`06-minify-keep-pe-phylo` output), for subgrid sizes 0 (i.e., the full grid), 27, 81, and 243.
-    This minification collapses monomorphic clades only among genomes on the same processing element (PE), so each tip keeps a single PE location.
-    Fossils were collected by snapshot sampling.
-    These runs include the fix in [`79a94ab`](https://github.com/mmore500/wse-async-ga/commit/79a94ab1f78e7b1239ecb2bb50ec3fd8809055e0), under which an empty tournament winner never displaces a living resident; without it, a recolonizing founder (placed in the first slot that selection overwrites) was usually lost, leaving its tile empty but closed to immigrants, and the metapopulation died out early in the run.
+    Data were generated by [`wse-async-ga` `wsclust/2026-10-22-mls-spectra-subgrid-fossils`](https://github.com/mmore500/wse-async-ga/tree/master/wsclust/2026-10-22-mls-spectra-subgrid-fossils) and are hosted at {", ".join(f"<https://osf.io/{slug}>" for slug in OSF_SLUGS)}.
+    Each file is one run's minified hstrat-reconstructed phylogeny (`05-minify-phylo` output), for subgrid sizes 0 (i.e., the full grid), 27, 81, and 243.
+    Fossils were collected by reservoir sampling, so each fossil layer spans the whole run rather than one timepoint.
 
-    Runs use genome flavor `genome_mlsspectrum_2026_10_25`, which combines the tile-population mechanics of `genome_mlsspectrum_2026_10_15` with the site layout of `genome_mlsindivspectra_2026_10_23`.
-    The genome carries three spectra of four sites each, with effect sizes $s_i \\in [0.05, 0.025, 0.01, 0.005]$, plus four neutral sites:
+    Runs use genome flavor `genome_mlsspectra_2026_10_22`, which carries three spectra of four sites each, with effect sizes $s_i \\in [0.05, 0.025, 0.01, 0.005]$, plus four neutral sites:
 
-    - **MLS** sites (`MLS`) are both favored within a tile population and harmful to recolonizing other tiles,
-    - **between-group deleterious** sites (`DELbg`) are only harmful to recolonizing other tiles, and
-    - **within-group beneficial** sites (`BENwg`) are only favored within a tile population.
+    - **MLS** sites (`MLS`) are both within-host beneficial and between-host deleterious,
+    - **between-host deleterious** sites (`del`) carry only the between-host cost, and
+    - **within-host beneficial** sites (`ben`) carry only the within-host advantage.
 
-    Labels follow the ETI framework, with evaluation bar notation giving each trait's between-group effect above and within-group effect below, and $\\varnothing$ for no effect: MLS $|^{{-}}_{{+}}$, DELbg $|^{{-}}_{{\\varnothing}}$, BENwg $|^{{\\varnothing}}_{{+}}$, and neutral sites NEU $|^{{\\varnothing}}_{{\\varnothing}}$.
-
-    Each tile population goes extinct with probability 0.01, and only extinct tiles accept immigrants, so genes move between tiles only by recolonization.
-    An immigrant carrying a between-group deleterious site is blocked (clobbered) from recolonizing with probability $s_i$ per site, leaving the tile open to later immigrants.
-    A within-group beneficial site gives relative fitness $1 + s'_i$ in size-2 tournaments, with $s'_i = (1 + s_i)^{{\\log_2(N) / 25}} - 1$ rescaled to tile population size $N$.
+    The between-host cost is that a carrier immigrating into an extinct tile population is clobbered with probability $s_i$.
+    The within-host advantage is relative fitness $1 + s'_i$, with $s'_i = (1 + s_i)^{{\\log_2(N) / 25}} - 1$ rescaled to tile population size $N$.
     Runs sweep subgrid size, where subgrids are blocks of tiles between which migration is disabled.
+
+    **Caveat:** these runs set `CEREBRASLIB_POPULATION_EXTINCTION_PROBABILITY` to 0, so tile populations never go extinct.
+    As the genome only accepts immigrants into extinct populations, immigration is a no-op and the between-host cost never applies: MLS sites behave as within-host beneficial sites and between-host deleterious sites behave as neutral sites (see site frequencies below), and tiles evolve in isolation regardless of subgrid size.
 
     Each subgrid is an isolated metapopulation, so populations are analyzed independently rather than pooled: within each population, the screen asks whether each focal (MLS, deleterious, or beneficial) site
 
     1. gives rise to more mutation-defined clades (MDCs) than expected for a neutral site (mutation-frequency screen), and
-    2. gives rise to MDCs that are smaller, shorter-lived, and/or spread over fewer PEs than neutral-site MDCs (clade-fitness screen).
+    2. gives rise to MDCs that are smaller and/or shorter-lived than neutral-site MDCs (clade-fitness screen).
 
     Detectability is the fraction of populations in which a screen is significant at $\\alpha = {ALPHA}$, broken down by population size, site class, and effect size.
     As a null calibration, the same screens are applied to each of the four neutral sites, against the other neutral sites.
@@ -319,14 +157,12 @@ def load_config(data_paths):
 @app.cell
 def tabulate_effect_sizes(config_df):
     # site class K's level-i site is flag byte B, bit b (trait site 8B + b),
-    # with clobber and within-population selection probabilities (0 where a
-    # class lacks that effect)
+    # with clobber and selection probabilities (0 where a class lacks an effect)
     _site_cols = [
         (int(B) * 8 + int(b), kind, what, col)
         for col in config_df.columns
         for kind, what, B, b in re.findall(
-            r"^(mls|deleterious|beneficial)"
-            r"_(clobber|selection)"
+            r"^(mls|deleterious|beneficial)_(clobber|selection)"
             r"_p_byte(\d+)_bit(\d+)$",
             col,
         )
@@ -340,6 +176,7 @@ def tabulate_effect_sizes(config_df):
                     "kind": kind,
                     f"{what}_p": row[col],
                     "clobber_scale": row["CEREBRASLIB_CLOBBER_IMMIGRANT_P"],
+                    "popsize": row["ASYNC_GA_POPSIZE"],
                 }
                 for row in config_df.iter_rows(named=True)
                 for site, kind, what, col in _site_cols
@@ -348,24 +185,16 @@ def tabulate_effect_sizes(config_df):
         .groupby(["config", "site"], as_index=False)
         .first()
     )
-    # base effect size s_i is clobber chance over its scale; within-group
-    # beneficial sites have none, so take s_i from the MLS site with the
-    # same selection probability
-    effect_sizes["effect_size"] = (
-        effect_sizes["clobber_p"] / effect_sizes["clobber_scale"]
+    # recover base effect size s_i from clobber probability or, for
+    # within-host beneficial sites, by inverting the selection rescaling
+    # s'_i = (1 + s_i) ^ (log2(N) / 25) - 1
+    effect_sizes["effect_size"] = np.where(
+        effect_sizes["kind"] == "beneficial",
+        (1 + effect_sizes["selection_p"])
+        ** (25 / np.log2(effect_sizes["popsize"]))
+        - 1,
+        effect_sizes["clobber_p"] / effect_sizes["clobber_scale"],
     ).round(6)
-    _is_mls = effect_sizes["kind"] == "mls"
-    _gain_to_s = dict(
-        zip(
-            effect_sizes.loc[_is_mls, "selection_p"],
-            effect_sizes.loc[_is_mls, "effect_size"],
-        ),
-    )
-    _is_ben = effect_sizes["kind"] == "beneficial"
-    effect_sizes.loc[_is_ben, "effect_size"] = effect_sizes.loc[
-        _is_ben, "selection_p"
-    ].map(_gain_to_s)
-    assert effect_sizes["effect_size"].notna().all()
     # effect sizes are the same across runs and site classes
     assert (effect_sizes.groupby("site")["effect_size"].nunique() == 1).all()
     assert (
@@ -383,19 +212,7 @@ def tabulate_effect_sizes(config_df):
     # every neutral site serves as a null control, against the others
     control_sites = background_sites
 
-    # ETI evaluation bar notation: between-group effect above, within-group
-    # effect below, with null (crossed circle) for no effect
-    kind_labels = {
-        "MLS": r"MLS$|^{-}_{+}$",
-        "DELbg": r"DEL$\mathit{bg}|^{-}_{\varnothing}$",
-        "BENwg": r"BEN$\mathit{wg}|^{\varnothing}_{+}$",
-        "NEU": r"NEU$|^{\varnothing}_{\varnothing}$",
-    }
-    _kind_labels = {
-        "mls": kind_labels["MLS"],
-        "deleterious": kind_labels["DELbg"],
-        "beneficial": kind_labels["BENwg"],
-    }
+    _kind_labels = {"mls": "MLS", "deleterious": "del", "beneficial": "ben"}
     _site_info = effect_sizes.groupby("site")[["kind", "effect_size"]].first()
     site_labels = pd.Series(
         {
@@ -403,7 +220,7 @@ def tabulate_effect_sizes(config_df):
                 f"{_kind_labels[_site_info.loc[site, 'kind']]}"
                 f" s={_site_info.loc[site, 'effect_size']:g}"
                 if site in focal_sites
-                else kind_labels["NEU"]
+                else "Neutral"
             )
             for site in range(NUM_SITES)
         },
@@ -412,13 +229,12 @@ def tabulate_effect_sizes(config_df):
         f"{_kind_labels[_kind]} s={_s:g}"
         for _kind in _kind_labels
         for _s in sorted(_site_info["effect_size"].unique(), reverse=True)
-    ] + [kind_labels["NEU"]]
+    ] + ["Neutral"]
     effect_sizes
     return (
         background_sites,
         control_sites,
         focal_sites,
-        kind_labels,
         mutation_order,
         site_labels,
     )
@@ -440,24 +256,10 @@ def delimit_prep_data():
 
 
 @app.cell
-def load_phylogeny(config_df, data_paths, site_labels):
+def load_phylogeny(data_paths, site_labels):
     # runs are independent, so each run's file is loaded, checked, summarized,
-    # pruned, and split into populations separately to bound memory use
-    _config_rows = {
-        row["config"]: (i, row)
-        for i, row in enumerate(
-            config_df.select(
-                "config",
-                "nRow",
-                "nCol",
-                "nRowSubgrid",
-                "nColSubgrid",
-                "tilePopSize",
-            ).iter_rows(named=True),
-        )
-    }
-    _phylos, _pops, _splits = [], [], []
-    _tips, _site_freqs, _times = [], [], []
+    # and pruned separately to bound memory use
+    _pruned, _tips, _site_freqs, _times = [], [], [], []
     _offset = 0
     for _path in data_paths:
         # unminify: rows are in depth-first order, with id = row index
@@ -473,9 +275,6 @@ def load_phylogeny(config_df, data_paths, site_labels):
                     "config",
                     "layer",
                     "subgrid",
-                    "row",
-                    "col",
-                    "nCol",
                 ],
             )
             .with_row_index("id")
@@ -491,13 +290,8 @@ def load_phylogeny(config_df, data_paths, site_labels):
                     pl.col("subgrid").cast(pl.Int64)
                 ),
                 trait_present=pl.col("trait_present").cast(pl.Int64),
-                # processing element (PE) of each genome tip
-                pe=pl.when(pl.col("clade_size") > 0).then(
-                    pl.col("row").cast(pl.Int64) * pl.col("nCol")
-                    + pl.col("col").cast(pl.Int64)
-                ),
             )
-            .drop("ancestor_offset", "row", "col", "nCol")
+            .drop("ancestor_offset")
             .to_pandas()
         )
 
@@ -577,40 +371,22 @@ def load_phylogeny(config_df, data_paths, site_labels):
         del _raw
         assert (_part["is_leaf"] == _part["extant"]).all()
         _part = _part.drop(columns=["extant", "layer"])
-        _code, _config_row = _config_rows[_part["config"].iloc[0]]
-        _phylo, _pop, _split = split_run_populations(_part, _code, _config_row)
-        del _part
         # offset ids so they are unique across runs
-        for _col in ("id", "ancestor_id", "root_id"):
-            _phylo[_col] += _offset
-        _offset += len(_phylo)
-        _phylos.append(_phylo)
-        _pops.append(_pop)
-        _splits.append(_split)
-        del _phylo
+        _part["id"] += _offset
+        _part["ancestor_id"] += _offset
+        _offset += len(_part)
+        _pruned.append(_part)
+        del _part
 
-    phylo = pd.concat(_phylos, ignore_index=True)
-    del _phylos
-    assert (phylo["id"] == np.arange(len(phylo))).all()
-    populations = pd.concat(_pops, ignore_index=True)
-    pop_size_order = (
-        populations.sort_values("pop_tiles")["pop_size"].unique().tolist()
-    )
-    split_summary = pd.DataFrame(_splits).sum().astype(int).to_frame("value")
+    phylo_pruned = pd.concat(_pruned, ignore_index=True)
+    del _pruned
+    assert (phylo_pruned["id"] == np.arange(len(phylo_pruned))).all()
     tips_summary = pd.concat(_tips).T
     times_summary = pd.concat(_times).T
     # genome-weighted fraction of fossil genomes carrying each site, by run
     site_frequencies = pd.DataFrame(_site_freqs).T
-    phylo.info()
-    return (
-        phylo,
-        pop_size_order,
-        populations,
-        site_frequencies,
-        split_summary,
-        times_summary,
-        tips_summary,
-    )
+    phylo_pruned.info()
+    return phylo_pruned, site_frequencies, times_summary, tips_summary
 
 
 @app.cell
@@ -635,9 +411,7 @@ def tabulate_site_frequencies(site_frequencies):
 @app.cell(hide_code=True)
 def note_site_frequencies():
     mo.md("""
-    Within-group beneficial (`BENwg`) and MLS sites are far more common than neutral sites, increasingly so with effect size (roughly 8-fold at $s = 0.005$ to 50-fold at $s = 0.05$), and about equally so.
-    Between-group deleterious (`DELbg`) sites are about as common as neutral sites.
-    So at these effect sizes, the recolonization (clobber) cost neither measurably offsets the MLS sites' within-population advantage nor depresses `DELbg` frequency.
+    MLS site frequencies match those of within-host beneficial sites at the same effect size, and between-host deleterious site frequencies match neutral site frequencies, consistent with the between-host cost never applying in these runs (see caveat above).
     """)
     return
 
@@ -656,40 +430,42 @@ def delimit_split_populations():
     return
 
 
-@app.function
-def split_run_populations(part, config_code, config_row):
-    """Split one run's pruned tree into its populations (subgrids), keeping
-    full-size ones, and mark per-node clade stats used downstream."""
-    _is_leaf = part["is_leaf"].to_numpy()
+@app.cell
+def split_populations(config_df, phylo_pruned):
+    _config_codes = {
+        config: i for i, config in enumerate(config_df["config"].to_list())
+    }
+    _is_leaf = phylo_pruned["is_leaf"].to_numpy()
     _pop_code = np.where(
         _is_leaf,
-        config_code * 2**32
-        + part["subgrid"].fillna(0).to_numpy(dtype=np.int64),
+        phylo_pruned["config"].map(_config_codes).to_numpy(dtype=np.int64)
+        * 2**32
+        + phylo_pruned["subgrid"].fillna(0).to_numpy(dtype=np.int64),
         -1,
     )
     _pure = pfl.alifestd_mask_monomorphic_clades_asexual(
-        part[["id", "ancestor_id"]],
+        phylo_pruned[["id", "ancestor_id"]],
         trait_mask=_is_leaf,
         trait_values=_pop_code,
     )["alifestd_mask_monomorphic_clades_asexual"].to_numpy()
-    _ancestor_ids = part["ancestor_id"].to_numpy()
-    _is_root = _ancestor_ids == part["id"].to_numpy()
+    _ancestor_ids = phylo_pruned["ancestor_id"].to_numpy()
+    _is_root = _ancestor_ids == phylo_pruned["id"].to_numpy()
     split_summary = pd.Series(
         {
-            "num_nodes": len(part),
+            "num_nodes": len(phylo_pruned),
             "num_multipopulation_nodes": int((~_pure).sum()),
             "num_roots_before": int(_is_root.sum()),
             "num_roots_after": int(
                 (_pure & (_is_root | ~_pure[_ancestor_ids])).sum()
             ),
         },
-    )
+    ).to_frame("value")
+
     _phylo_split = (
-        part[_pure]
-        .drop(columns=["config"])
+        phylo_pruned[_pure]
         .assign(
             ancestor_id=np.where(
-                _pure[_ancestor_ids], _ancestor_ids, part["id"]
+                _pure[_ancestor_ids], _ancestor_ids, phylo_pruned["id"]
             )[_pure],
             pop_code=_pop_code[_pure],
         )
@@ -698,7 +474,6 @@ def split_run_populations(part, config_code, config_row):
         .pipe(pfl.alifestd_mark_root_id, mutate=True)
         .reset_index(drop=True)
     )
-    del _pure, _pop_code, _ancestor_ids, _is_root
     _root_pops = (
         _phylo_split.loc[_phylo_split["is_leaf"]]
         .groupby("root_id")["pop_code"]
@@ -707,20 +482,49 @@ def split_run_populations(part, config_code, config_row):
     assert (_root_pops["nunique"] == 1).all()
     _phylo_split["pop_code"] = _phylo_split["root_id"].map(_root_pops["first"])
     assert (_phylo_split["pop_code"] >= 0).all()
+    _phylo_split["config"] = _phylo_split.groupby("pop_code")[
+        "config"
+    ].transform("first")
     _phylo_split["subgrid"] = (_phylo_split["pop_code"] % 2**32).astype(int)
+    # the split tree is kept only within this cell, to bound memory use
+    # cast grid dimensions from unsigned dtypes, which would wrap on the
+    # negation in the ceiling division below
+    _config = (
+        config_df.select(
+            "config",
+            "nRow",
+            "nCol",
+            "nRowSubgrid",
+            "nColSubgrid",
+            "tilePopSize",
+        )
+        .to_pandas()
+        .astype(
+            {
+                col: "int64"
+                for col in (
+                    "nRow",
+                    "nCol",
+                    "nRowSubgrid",
+                    "nColSubgrid",
+                    "tilePopSize",
+                )
+            },
+        )
+    )
     _leaves = _phylo_split[_phylo_split["is_leaf"]]
     populations = (
         _leaves.groupby("pop_code")
         .agg(
+            config=("config", "first"),
             subgrid=("subgrid", "first"),
             num_leaves=("id", "size"),
             num_genomes=("clade_size", "sum"),
             num_roots=("root_id", "nunique"),
         )
         .reset_index()
-        .assign(**config_row)
+        .merge(_config, on="config")
     )
-    del _leaves
     _has_subgrids = populations["nRowSubgrid"] > 0
     _nrow_sub = populations["nRowSubgrid"].where(
         _has_subgrids, populations["nRow"]
@@ -739,6 +543,10 @@ def split_run_populations(part, config_code, config_row):
         f"{r}x{c}"
         for r, c in zip(_nrow_sub.astype(int), _ncol_sub.astype(int))
     ]
+    pop_size_order = (
+        populations.sort_values("pop_tiles")["pop_size"].unique().tolist()
+    )
+    del _leaves
     _full_pops = populations.loc[populations["is_full_size"], "pop_code"]
     phylo = (
         _phylo_split[_phylo_split["pop_code"].isin(_full_pops)]
@@ -748,10 +556,10 @@ def split_run_populations(part, config_code, config_row):
         .pipe(pfl.alifestd_mark_num_leaves_asexual, mutate=True)
         .reset_index(drop=True)
     )
-    del _phylo_split
     phylo["trait_present"] = (
         phylo["trait_present"].fillna(0).to_numpy(dtype=np.uint64)
     )
+    del _phylo_split
     _is_leaf = phylo["is_leaf"].to_numpy()
     phylo["num_genomes"] = pfl.alifestd_calc_clade_trait_count_asexual(
         phylo[["id", "ancestor_id"]],
@@ -772,7 +580,8 @@ def split_run_populations(part, config_code, config_row):
         .to_numpy()
     )
     phylo = phylo.pipe(pfl.alifestd_mark_clade_duration_asexual, mutate=True)
-    return phylo, populations, split_summary
+    phylo.info()
+    return phylo, pop_size_order, populations, split_summary
 
 
 @app.cell
@@ -831,7 +640,17 @@ def delimit_tree_plots():
 @app.cell
 def plot_trees(focal_sites, phylo, pop_size_order, populations):
     _focal_mask = np.uint64(sum(1 << site for site in focal_sites))
-    _roots = phylo.loc[phylo["is_root"], ["id", "num_leaves", "pop_code"]]
+    _trait_present = phylo["trait_present"].to_numpy(dtype=np.uint64)
+    _is_leaf = phylo["is_leaf"].to_numpy()
+    _phylo = phylo.assign(
+        has_mls=np.where(
+            _is_leaf, (_trait_present & _focal_mask) != 0, np.nan
+        ),
+        has_neutral=np.where(
+            _is_leaf, (_trait_present & ~_focal_mask) != 0, np.nan
+        ),
+    )
+    _roots = _phylo.loc[_phylo["is_root"], ["id", "num_leaves", "pop_code"]]
     _roots = _roots[_roots["num_leaves"] <= MAX_TREE_LEAVES]
     _rng = random.Random(SEED)
     for _pop_size in pop_size_order:
@@ -850,19 +669,8 @@ def plot_trees(focal_sites, phylo, pop_size_order, populations):
             .item()
         )
 
-        # mark traits on the subtree only, to avoid copying the whole forest
-        _subtree = phylo[phylo["root_id"] == _root_id]
-        _trait_present = _subtree["trait_present"].to_numpy(dtype=np.uint64)
-        _is_leaf = _subtree["is_leaf"].to_numpy()
         _subtree = (
-            _subtree.assign(
-                has_mls=np.where(
-                    _is_leaf, (_trait_present & _focal_mask) != 0, np.nan
-                ),
-                has_neutral=np.where(
-                    _is_leaf, (_trait_present & ~_focal_mask) != 0, np.nan
-                ),
-            )
+            _phylo[_phylo["root_id"] == _root_id]
             .pipe(pfl.alifestd_assign_contiguous_ids)
             .pipe(pfl.alifestd_try_add_ancestor_list_col)
         )
@@ -982,7 +790,6 @@ def delimit_screen_mdcs():
     MDC size is measured as `carriers`, the number of descendant fossil genomes carrying the mutation; `num_genomes` counts all descendant fossil genomes.
     `carrier_frac` is the carrier fraction among descendant genomes, and `is_terminal` marks MDCs arising on a terminal branch to a single genome (MDC node is an uncollapsed leaf).
     `clade_duration` spans from MDC origin to its latest descendant fossil.
-    `num_pes` counts the distinct processing elements (PEs) among the MDC's carrier genomes, a measure of its spatial spread.
     """)
     return
 
@@ -990,24 +797,11 @@ def delimit_screen_mdcs():
 @app.cell
 def screen_mdcs(phylo):
     _work = phylo[["id", "ancestor_id"]].copy()
-    assert (_work["id"] == np.arange(len(_work))).all()
     _is_leaf = phylo["is_leaf"].to_numpy()
     _clade_size = phylo["clade_size"].fillna(0).to_numpy(dtype=np.int64)
     _trait_present = phylo["trait_present"].to_numpy(dtype=np.uint64)
-    _pe = phylo["pe"].fillna(-1).to_numpy(dtype=np.int64)
-    assert (_pe[_is_leaf] >= 0).all()
-    # each clade's nodes form a contiguous block in preorder, starting at the
-    # clade root and spanning its descendants
-    _preorder_pos = np.empty(len(_work), dtype=np.int64)
-    _preorder_pos[pfl.alifestd_unfurl_traversal_preorder_asexual(_work)] = (
-        np.arange(len(_work))
-    )
-    _num_descendants = pfl.alifestd_mark_num_descendants_asexual(_work)[
-        "num_descendants"
-    ].to_numpy()
     mdc_ids = {}
     mdc_carriers = {}
-    mdc_num_pes = {}
     for _site in mo.status.progress_bar(range(NUM_SITES)):
         _has = ((_trait_present >> np.uint64(_site)) & np.uint64(1)) != 0
         _mask = _work.pipe(
@@ -1022,28 +816,9 @@ def screen_mdcs(phylo):
             mutate=True,
             trait_mask=np.where(_is_leaf & _has, _clade_size, 0),
         )
-        _ids = np.flatnonzero(_mask)
-        mdc_ids[_site] = _ids
+        mdc_ids[_site] = np.flatnonzero(_mask)
         mdc_carriers[_site] = _carriers[_mask]
-        # count distinct PEs among each MDC's carrier tips, by pairing each
-        # MDC with the carrier tips in its preorder block
-        _tips = np.flatnonzero(_is_leaf & _has)
-        _order = np.argsort(_preorder_pos[_tips])
-        _tip_pos = _preorder_pos[_tips][_order]
-        _tip_pe = _pe[_tips][_order]
-        _lo = np.searchsorted(_tip_pos, _preorder_pos[_ids])
-        _hi = np.searchsorted(
-            _tip_pos, _preorder_pos[_ids] + _num_descendants[_ids], "right"
-        )
-        _counts = _hi - _lo
-        _mdc_idx = np.repeat(np.arange(len(_ids)), _counts)
-        _tip_idx = np.repeat(_lo - np.cumsum(_counts) + _counts, _counts)
-        _tip_idx += np.arange(len(_tip_idx))
-        _pairs = np.unique(
-            np.stack([_mdc_idx, _tip_pe[_tip_idx]], axis=1), axis=0
-        )
-        mdc_num_pes[_site] = np.bincount(_pairs[:, 0], minlength=len(_ids))
-    return mdc_carriers, mdc_ids, mdc_num_pes
+    return mdc_carriers, mdc_ids
 
 
 @app.cell
@@ -1052,7 +827,6 @@ def tabulate_mdcs(
     focal_sites,
     mdc_carriers,
     mdc_ids,
-    mdc_num_pes,
     phylo,
     populations,
     site_labels,
@@ -1073,7 +847,6 @@ def tabulate_mdcs(
                 is_focal=site in focal_sites,
                 is_control=site in control_sites,
                 carriers=mdc_carriers[site],
-                num_pes=mdc_num_pes[site],
             )
             for site, ids in mdc_ids.items()
         ],
@@ -1092,7 +865,6 @@ def tabulate_mdcs(
         carrier_frac_mean=("carrier_frac", "mean"),
         terminal_frac=("is_terminal", "mean"),
         clade_duration_mean=("clade_duration", "mean"),
-        num_pes_mean=("num_pes", "mean"),
     ).unstack("pop_size")
     return (mdcs,)
 
@@ -1186,17 +958,11 @@ def plot_freq_enrichment(freq_screen, mutation_order, pop_size_order):
         teeplot_show=True,
         teeplot_subdir=pathlib.Path(__file__).stem,
     ) as _ax:
-        gap_points(_ax, _ax.get_legend())
         _ax.axhline(1, color="gray", linestyle="--", zorder=0)
         _ax.set_yscale("log")
         _ax.set_xlabel("Mutation (site class and effect size)")
-        _ax.set_ylabel("MDC Enrichment\n(median, IQR)")
-        plt.setp(
-            _ax.get_xticklabels(),
-            rotation=30,
-            ha="right",
-            rotation_mode="anchor",
-        )
+        _ax.set_ylabel("MDC Fold Enrichment\n(median, IQR)")
+        _ax.tick_params(axis="x", rotation=30)
         sns.move_legend(
             _ax,
             "upper left",
@@ -1228,17 +994,11 @@ def plot_freq_detection(freq_screen, mutation_order, pop_size_order):
         teeplot_show=True,
         teeplot_subdir=pathlib.Path(__file__).stem,
     ) as _ax:
-        gap_points(_ax, _ax.get_legend())
         _ax.axhline(ALPHA, color="gray", linestyle="--", zorder=0)
         _ax.set_ylim(-0.05, 1.05)
         _ax.set_xlabel("Mutation (site class and effect size)")
         _ax.set_ylabel("Detection Rate\n(frequency screen)")
-        plt.setp(
-            _ax.get_xticklabels(),
-            rotation=30,
-            ha="right",
-            rotation_mode="anchor",
-        )
+        _ax.tick_params(axis="x", rotation=30)
         sns.move_legend(
             _ax,
             "upper left",
@@ -1256,7 +1016,7 @@ def delimit_fitness_screen():
     mo.md("""
     ## Clade-fitness Screen
 
-    Within each population, each MDC's size (`carriers`), clade duration, and PE count (`num_pes`) are percentile-ranked (mean rank for ties) against comparator MDCs: the pooled MDCs of background (neutral) sites in the same population, drawn from the same MDC subset.
+    Within each population, each MDC's size (`carriers`) and clade duration are percentile-ranked (mean rank for ties) against comparator MDCs: the pooled MDCs of background (neutral) sites in the same population, drawn from the same MDC subset.
     Under the `epoch100` normalization, comparison is further restricted to comparators originating within the same 100-update `origin_time` bin, controlling for recency bias.
 
     For each population and site, a one-sided Mann-Whitney U test asks whether the site's MDC percentiles are lower than those of background MDCs (excluding the site itself, for neutral control sites).
@@ -1283,7 +1043,7 @@ def define_subsets():
 @app.cell
 def calc_normed_stats(mdcs, subsets):
     normalizations = {"all": None, "epoch100": 100}
-    stat_cols = ("carriers", "clade_duration", "num_pes")
+    stat_cols = ("carriers", "clade_duration")
     _parts = []
     for _subset, _subset_mask in subsets.items():
         _data = mdcs[_subset_mask(mdcs)]
@@ -1425,19 +1185,12 @@ def plot_fitness_percentiles(
         teeplot_show=True,
         teeplot_subdir=pathlib.Path(__file__).stem,
     ) as _g:
-        gap_points(*_g.axes.flat, _g.legend)
         _g.refline(y=50, color="gray", linestyle="--")
         _g.set_axis_labels(
             "Mutation (site class and effect size)",
             "Mean MDC Percentile\n(median, IQR)",
         )
-        for _a in _g.axes.flat:
-            plt.setp(
-                _a.get_xticklabels(),
-                rotation=30,
-                ha="right",
-                rotation_mode="anchor",
-            )
+        _g.tick_params(axis="x", rotation=30)
         _g.legend.set_title("Subgrid")
     return
 
@@ -1476,20 +1229,13 @@ def plot_fitness_detection(fitness_detection, mutation_order, pop_size_order):
             teeplot_show=True,
             teeplot_subdir=pathlib.Path(__file__).stem,
         ) as _g:
-            gap_points(*_g.axes.flat, _g.legend)
             _g.refline(y=ALPHA, color="gray", linestyle="--")
             _g.set(ylim=(-0.05, 1.05))
             _g.set_axis_labels(
                 "Mutation (site class and effect size)",
                 "Detection Rate\n(fitness screen)",
             )
-            for _a in _g.axes.flat:
-                plt.setp(
-                    _a.get_xticklabels(),
-                    rotation=30,
-                    ha="right",
-                    rotation_mode="anchor",
-                )
+            _g.tick_params(axis="x", rotation=30)
             _g.legend.set_title("Subgrid")
             _g.figure.suptitle(f"normalization={_norm}", y=1.02)
         plt.close("all")
@@ -1502,7 +1248,7 @@ def delimit_detectability():
     ## Detectability Summary
 
     Fraction of populations in which each screen detects each site at $\\alpha = {ALPHA}$, by population size (rows) and site class and effect size (columns).
-    The `NEU` column gives the false positive rate over neutral control sites, and should sit near {ALPHA}.
+    The `Neutral` column gives the false positive rate over neutral control sites, and should sit near {ALPHA}.
     Fitness screens shown use `epoch100` normalization.
 
     Note that sampled fossil genomes per population grow with subgrid size (fossils were sampled with an equal budget per fossil layer and subgrid), so population size and sample size are confounded here.
@@ -1521,7 +1267,7 @@ def tabulate_detectability(fitness_detection, freq_screen):
                 & (fitness_detection["stat"] == _stat)
                 & (fitness_detection["subset"] == _subset)
             ]
-            for _stat in ("carriers", "clade_duration", "num_pes")
+            for _stat in ("carriers", "clade_duration")
             for _subset in ("all", "inner_f75")
         },
     }
@@ -1569,654 +1315,10 @@ def plot_detectability(detectability, mutation_order, pop_size_order):
             _ax.set_xlabel("Mutation (site class and effect size)")
             _ax.set_ylabel("Subgrid")
             _ax.set_title(_screen)
-            plt.setp(
-                _ax.get_xticklabels(),
-                rotation=40,
-                ha="right",
-                rotation_mode="anchor",
-            )
+            _ax.tick_params(axis="x", rotation=30)
             _ax.tick_params(axis="y", rotation=0)
             _ax.figure.set_size_inches(10, 2.4)
         plt.close("all")
-    return
-
-
-@app.cell(hide_code=True)
-def delimit_by_kind():
-    mo.md(f"""
-    ## Detectability by Site Class
-
-    The same screen results, recast with effect size on the x axis, site class as color, and subgrid size as columns.
-    Neutral control sites appear as their own x position.
-    Error bars are 95% bootstrap confidence intervals over populations; the dashed line marks $\\alpha = {ALPHA}$.
-    Fitness screens shown use `epoch100` normalization.
-    """)
-    return
-
-
-@app.cell
-def tabulate_by_kind(fitness_detection, freq_screen, kind_labels):
-    def _split_mutation(df):
-        _parts = df["mutation"].str.extract(r"^(.+) s=(\S+)$")
-        return df.assign(
-            kind=_parts[0].fillna(kind_labels["NEU"]),
-            effect_size=_parts[1].fillna("neu").map(effect_pct),
-        )
-
-    by_kind = pd.concat(
-        [
-            freq_screen.assign(
-                screen="frequency", p_value=freq_screen["poisson_sf_p"]
-            ),
-            *(
-                fitness_detection[
-                    (fitness_detection["normalization"] == "epoch100")
-                    & (fitness_detection["stat"] == _stat)
-                    & (fitness_detection["subset"] == _subset)
-                ].assign(
-                    screen=f"fitness {_stat} {_subset}",
-                    p_value=lambda df: df["p_mw_less"],
-                )
-                for _stat in ("carriers", "clade_duration", "num_pes")
-                for _subset in ("all", "inner_f75")
-            ),
-        ],
-        ignore_index=True,
-    )[
-        [
-            "screen",
-            "pop_code",
-            "pop_size",
-            "site",
-            "mutation",
-            "detected",
-            "site_mean_pct",
-            "p_value",
-        ]
-    ].pipe(
-        _split_mutation
-    )
-    kind_order = [
-        kind_labels[_kind]
-        for _kind in ("NEU", "BENwg", "DELbg", "MLS")
-        if kind_labels[_kind] in set(by_kind["kind"])
-    ]
-    effect_size_order = ["neu"] + sorted(
-        set(by_kind["effect_size"]) - {"neu"}, key=float
-    )
-    kind_palette = {
-        kind_labels[_kind]: ETI_PALETTE[_key][1]
-        for _kind, _key in (
-            ("NEU", "neutral"),
-            ("BENwg", "BENwg"),
-            ("DELbg", "DELbg"),
-            ("MLS", "MLS"),
-        )
-    }
-    freq_by_kind = freq_screen.pipe(_split_mutation)
-    by_kind.groupby(["screen", "pop_size", "kind", "effect_size"], sort=False)[
-        "detected"
-    ].mean().unstack("pop_size")
-    return by_kind, effect_size_order, freq_by_kind, kind_order, kind_palette
-
-
-@app.cell
-def plot_detection_by_kind(
-    by_kind,
-    effect_size_order,
-    kind_order,
-    kind_palette,
-    pop_size_order,
-):
-    for _screen, _df in by_kind.groupby("screen", sort=False):
-        with tp.teed(
-            sns.catplot,
-            data=_df.astype({"detected": float}),
-            x="effect_size",
-            y="detected",
-            order=effect_size_order,
-            hue="kind",
-            hue_order=kind_order,
-            palette=kind_palette,
-            col="pop_size",
-            col_order=pop_size_order,
-            col_wrap=2,
-            kind="point",
-            errorbar=("ci", 95),
-            n_boot=1000,
-            seed=SEED,
-            dodge=0.3,
-            height=1.5,
-            aspect=1.1,
-            teeplot_outattrs={"screen": _screen.replace(" ", "-")},
-            teeplot_outexclude=[
-                "palette",
-                "hue_order",
-                "col_order",
-                "col_wrap",
-                "dodge",
-                "order",
-                "seed",
-            ],
-            teeplot_show=True,
-            teeplot_subdir=pathlib.Path(__file__).stem,
-        ) as _g:
-            gap_points(*_g.axes.flat, _g.legend)
-            _g.refline(y=ALPHA, color="gray", linestyle="--")
-            _g.set(ylim=(-0.05, 1.05))
-            _g.set_axis_labels("", f"Detection Rate\n({_screen})")
-            _g.set_titles(col_template="subgrid {col_name}")
-            for _a in _g.axes.flat:
-                plt.setp(
-                    _a.get_xticklabels(),
-                    rotation=90,
-                    ha="right",
-                    va="center",
-                    rotation_mode="anchor",
-                )
-            corner_xlabel(_g, right_legend(_g))
-        plt.close("all")
-    return
-
-
-@app.cell(hide_code=True)
-def delimit_fitness_pct_by_kind():
-    mo.md(r"""
-    ## MDC Size and Duration by Site Class
-
-    The fitness screen's underlying measurement: each site's mean MDC percentile for clade size (`carriers`) and clade duration, ranked against background (neutral) MDCs within the same population and 100-update origin epoch.
-    All MDCs are included.
-    The dashed line at 50 marks parity with background; lower values mean smaller or shorter-lived clades.
-    Points are medians over populations, with error bars spanning the interquartile range.
-    """)
-    return
-
-
-@app.cell
-def plot_fitness_pct_by_kind(
-    by_kind,
-    effect_size_order,
-    kind_order,
-    kind_palette,
-    pop_size_order,
-):
-    _stat_names = {
-        "carriers": "Clade Size",
-        "clade_duration": "Clade Duration",
-        "num_pes": "Clade PE Count",
-    }
-    # all MDCs subset only
-    _fitness = by_kind[
-        by_kind["screen"].str.startswith("fitness ")
-        & by_kind["screen"].str.endswith(" all")
-    ]
-    for _screen, _df in _fitness.groupby("screen", sort=False):
-        _stat = _screen.split(" ")[1]
-        with tp.teed(
-            sns.catplot,
-            data=_df.dropna(subset=["site_mean_pct"]),
-            x="effect_size",
-            y="site_mean_pct",
-            order=effect_size_order,
-            hue="kind",
-            hue_order=kind_order,
-            palette=kind_palette,
-            col="pop_size",
-            col_order=pop_size_order,
-            col_wrap=2,
-            kind="point",
-            estimator="median",
-            errorbar=("pi", 50),
-            dodge=0.3,
-            height=1.5,
-            aspect=1.1,
-            teeplot_outattrs={"screen": _screen.replace(" ", "-")},
-            teeplot_outexclude=[
-                "palette",
-                "hue_order",
-                "col_order",
-                "col_wrap",
-                "dodge",
-                "order",
-            ],
-            teeplot_show=True,
-            teeplot_subdir=pathlib.Path(__file__).stem,
-        ) as _g:
-            gap_points(*_g.axes.flat, _g.legend)
-            _g.refline(y=50, color="gray", linestyle="--")
-            _g.set_axis_labels(
-                "",
-                f"{_stat_names[_stat]}\nPercentile\n(median, IQR)",
-            )
-            _g.set_titles(col_template="subgrid {col_name}")
-            for _a in _g.axes.flat:
-                plt.setp(
-                    _a.get_xticklabels(),
-                    rotation=90,
-                    ha="right",
-                    va="center",
-                    rotation_mode="anchor",
-                )
-            corner_xlabel(_g, right_legend(_g))
-        plt.close("all")
-    return
-
-
-@app.cell(hide_code=True)
-def delimit_pvalue_by_kind():
-    mo.md(f"""
-    ## Detection Strength by Site Class
-
-    Screen p-values on a log scale, descending from $p = 1$ at top so stronger evidence plots lower.
-    Points are medians over populations, with error bars spanning the interquartile range; the dashed line marks $\\alpha = {ALPHA}$.
-    Populations where a site produced no MDCs (so the screen could not run) count as $p = 1$, and p-values below $10^{{-9}}$ are clipped to $10^{{-9}}$.
-    Fitness screens shown use all MDCs and `epoch100` normalization.
-    """)
-    return
-
-
-@app.cell
-def plot_pvalue_by_kind(
-    by_kind,
-    effect_size_order,
-    kind_order,
-    kind_palette,
-    pop_size_order,
-):
-    _screen_names = {
-        "frequency": "MDC Frequency",
-        "fitness carriers all": "Clade Size",
-        "fitness clade_duration all": "Clade Duration",
-        "fitness num_pes all": "Clade PE Count",
-    }
-    for _screen, _name in _screen_names.items():
-        _df = by_kind[by_kind["screen"] == _screen].assign(
-            p_value=lambda df: df["p_value"].fillna(1.0).clip(lower=1e-9),
-        )
-        with tp.teed(
-            sns.catplot,
-            data=_df,
-            x="effect_size",
-            y="p_value",
-            order=effect_size_order,
-            hue="kind",
-            hue_order=kind_order,
-            palette=kind_palette,
-            col="pop_size",
-            col_order=pop_size_order,
-            col_wrap=2,
-            kind="point",
-            estimator="median",
-            errorbar=("pi", 50),
-            dodge=0.3,
-            height=1.5,
-            aspect=1.1,
-            log_scale=(False, True),
-            teeplot_outattrs={"screen": _screen.replace(" ", "-")},
-            teeplot_outexclude=[
-                "palette",
-                "hue_order",
-                "col_order",
-                "col_wrap",
-                "dodge",
-                "order",
-                "log_scale",
-            ],
-            teeplot_show=True,
-            teeplot_subdir=pathlib.Path(__file__).stem,
-        ) as _g:
-            gap_points(*_g.axes.flat, _g.legend)
-            _g.refline(y=ALPHA, color="gray", linestyle="--")
-            # p = 1 at top, descending to the 1e-9 clip floor, with a
-            # little padding so edge markers aren't cut off
-            _g.set(
-                ylim=(10**-9.4, 10**0.2),
-                yticks=[1, 1e-3, 1e-6, 1e-9],
-            )
-            _g.set_axis_labels("", f"p-value\n({_name})")
-            _g.set_titles(col_template="subgrid {col_name}")
-            for _a in _g.axes.flat:
-                plt.setp(
-                    _a.get_xticklabels(),
-                    rotation=90,
-                    ha="right",
-                    va="center",
-                    rotation_mode="anchor",
-                )
-            corner_xlabel(_g, right_legend(_g))
-        plt.close("all")
-    return
-
-
-@app.cell
-def plot_enrichment_by_kind(
-    effect_size_order,
-    freq_by_kind,
-    kind_order,
-    kind_palette,
-    pop_size_order,
-):
-    with tp.teed(
-        sns.catplot,
-        data=freq_by_kind,
-        x="effect_size",
-        y="fold_enrichment",
-        order=effect_size_order,
-        hue="kind",
-        hue_order=kind_order,
-        palette=kind_palette,
-        col="pop_size",
-        col_order=pop_size_order,
-        col_wrap=2,
-        kind="point",
-        estimator="median",
-        errorbar=("pi", 50),
-        dodge=0.3,
-        height=1.5,
-        aspect=1.1,
-        teeplot_outexclude=[
-            "palette",
-            "hue_order",
-            "col_order",
-            "col_wrap",
-            "dodge",
-            "order",
-        ],
-        teeplot_show=True,
-        teeplot_subdir=pathlib.Path(__file__).stem,
-    ) as _g:
-        gap_points(*_g.axes.flat, _g.legend)
-        _g.refline(y=1, color="gray", linestyle="--")
-        _g.set_axis_labels("", "MDC Enrichment\n(median, IQR)")
-        _g.set_titles(col_template="subgrid {col_name}")
-        for _a in _g.axes.flat:
-            plt.setp(
-                _a.get_xticklabels(),
-                rotation=90,
-                ha="right",
-                va="center",
-                rotation_mode="anchor",
-            )
-        corner_xlabel(_g, right_legend(_g))
-    plt.close("all")
-    return
-
-
-@app.cell(hide_code=True)
-def delimit_paired_freq_screen():
-    mo.md(f"""
-    ## Paired Mutation-frequency Screen: MLS vs. DELbg
-
-    MLS and between-group deleterious (`DELbg`) sites at the same effect size share the same recolonization (clobber) cost, so any difference in their MDC counts comes from the MLS site's within-population advantage.
-    Within each population, for each effect size, this screen tests whether the MLS site gives rise to more MDCs than the `DELbg` site.
-    Under the null of equal rates, given $n = k_\\mathrm{{MLS}} + k_\\mathrm{{del}}$ MDCs in total, $k_\\mathrm{{MLS}} \\sim \\mathsf{{Binom}}(n, 1/2)$, so significance is the one-sided binomial survival probability of observing at least $k_\\mathrm{{MLS}}$ (the conditional exact test comparing two Poisson counts).
-    Populations with no MDCs at either site count as not detected.
-    As a null calibration, neutral sites are paired off and screened the same way.
-    Error bars are 95% bootstrap confidence intervals over populations; the dashed line marks $\\alpha = {ALPHA}$.
-    """)
-    return
-
-
-@app.cell
-def calc_paired_freq_screen(
-    background_sites,
-    freq_screen,
-    kind_labels,
-    site_labels,
-):
-    _counts = freq_screen.pivot(
-        index="pop_code", columns="site", values="mdc_count"
-    )
-    _site_of = {label: site for site, label in site_labels.items()}
-    _pairs = [
-        (
-            label.split("=")[1],
-            _site,
-            _site_of[f"{kind_labels['DELbg']} s={label.split('=')[1]}"],
-        )
-        for _site, label in site_labels.items()
-        if label.startswith(kind_labels["MLS"])
-    ] + [
-        ("neu", _a, _b)
-        for _a, _b in zip(background_sites[::2], background_sites[1::2])
-    ]
-    paired_freq_screen = pd.concat(
-        [
-            pd.DataFrame(
-                {
-                    "pop_code": _counts.index,
-                    "effect_size": effect_pct(_effect),
-                    "kind": (
-                        (
-                            kind_labels["NEU"]
-                            if _effect == "neu"
-                            else kind_labels["MLS"]
-                        )
-                    ),
-                    "site": _site,
-                    "comparator_site": _comparator,
-                    "k_site": _counts[_site].to_numpy(),
-                    "k_comparator": _counts[_comparator].to_numpy(),
-                },
-            )
-            for _effect, _site, _comparator in _pairs
-        ],
-        ignore_index=True,
-    ).merge(
-        freq_screen[["pop_code", "pop_size"]].drop_duplicates(),
-        on="pop_code",
-    )
-    _n = paired_freq_screen["k_site"] + paired_freq_screen["k_comparator"]
-    paired_freq_screen["binom_sf_p"] = np.where(
-        _n > 0,
-        scipy_stats.binom.sf(paired_freq_screen["k_site"] - 1, _n, 0.5),
-        np.nan,
-    )
-    paired_freq_screen["detected"] = paired_freq_screen["binom_sf_p"] < ALPHA
-    paired_freq_screen.groupby(
-        ["pop_size", "kind", "effect_size"], sort=False
-    ).agg(
-        num_populations=("pop_code", "nunique"),
-        k_site_mean=("k_site", "mean"),
-        k_comparator_mean=("k_comparator", "mean"),
-        detection_rate=("detected", "mean"),
-    ).unstack(
-        "pop_size"
-    )
-    return (paired_freq_screen,)
-
-
-@app.cell
-def plot_paired_freq_detection(
-    effect_size_order,
-    kind_labels,
-    kind_palette,
-    paired_freq_screen,
-    pop_size_order,
-):
-    with tp.teed(
-        sns.catplot,
-        data=paired_freq_screen.astype({"detected": float}),
-        x="effect_size",
-        y="detected",
-        order=effect_size_order,
-        hue="kind",
-        hue_order=[kind_labels["NEU"], kind_labels["MLS"]],
-        palette=kind_palette,
-        col="pop_size",
-        col_order=pop_size_order,
-        col_wrap=2,
-        kind="point",
-        errorbar=("ci", 95),
-        n_boot=1000,
-        seed=SEED,
-        dodge=0.3,
-        height=1.5,
-        aspect=1.1,
-        teeplot_outattrs={"screen": "paired-frequency"},
-        teeplot_outexclude=[
-            "palette",
-            "hue_order",
-            "col_order",
-            "col_wrap",
-            "dodge",
-            "order",
-            "seed",
-        ],
-        teeplot_show=True,
-        teeplot_subdir=pathlib.Path(__file__).stem,
-    ) as _g:
-        gap_points(*_g.axes.flat, _g.legend)
-        _g.refline(y=ALPHA, color="gray", linestyle="--")
-        _g.set(ylim=(-0.05, 1.05))
-        _g.set_axis_labels(
-            "",
-            f"Detection Rate\nvs. {kind_labels['DELbg']}",
-        )
-        _g.set_titles(col_template="subgrid {col_name}")
-        for _a in _g.axes.flat:
-            plt.setp(
-                _a.get_xticklabels(),
-                rotation=90,
-                ha="right",
-                va="center",
-                rotation_mode="anchor",
-            )
-        corner_xlabel(_g, right_legend(_g))
-    plt.close("all")
-    return
-
-
-@app.cell(hide_code=True)
-def delimit_del_enrichment():
-    mo.md(r"""
-    MDC fold enrichment normalized to the between-group deleterious (`DELbg`) site at the same effect size (rather than to neutral sites), i.e., $k_\mathrm{site} / k_\mathrm{DELbg}$ within each population.
-    MLS sites above 1 reflect their within-population advantage over an otherwise-equal recolonization cost.
-    As a null reference, neutral sites are paired off and normalized to each other.
-    Populations with no MDCs at the normalizing site are omitted.
-    Points give medians and error bars interquartile ranges over populations.
-    """)
-    return
-
-
-@app.cell
-def calc_del_enrichment(
-    background_sites,
-    freq_screen,
-    kind_labels,
-    kind_order,
-    site_labels,
-):
-    _counts = freq_screen.pivot(
-        index="pop_code", columns="site", values="mdc_count"
-    )
-    _site_of = {label: site for site, label in site_labels.items()}
-    _pairs = [
-        (
-            _kind,
-            _effect,
-            _site,
-            _site_of[f"{kind_labels['DELbg']} s={_effect}"],
-        )
-        for _site, _label in site_labels.items()
-        if _label.startswith((kind_labels["MLS"], kind_labels["BENwg"]))
-        for _kind, _effect in [_label.split(" s=")]
-    ] + [
-        (kind_labels["NEU"], "neu", _a, _b)
-        for _a, _b in zip(background_sites[::2], background_sites[1::2])
-    ]
-    del_enrichment = pd.concat(
-        [
-            pd.DataFrame(
-                {
-                    "pop_code": _counts.index,
-                    "kind": _kind,
-                    "effect_size": effect_pct(_effect),
-                    "site": _site,
-                    "k_site": _counts[_site].to_numpy(),
-                    "k_del": _counts[_norm].to_numpy(),
-                },
-            )
-            for _kind, _effect, _site, _norm in _pairs
-        ],
-        ignore_index=True,
-    ).merge(
-        freq_screen[["pop_code", "pop_size"]].drop_duplicates(),
-        on="pop_code",
-    )
-    del_enrichment = del_enrichment[del_enrichment["k_del"] > 0].copy()
-    del_enrichment["fold_enrichment_del"] = (
-        del_enrichment["k_site"] / del_enrichment["k_del"]
-    )
-    del_kind_order = [_k for _k in kind_order if _k != kind_labels["DELbg"]]
-    del_enrichment.groupby(
-        ["pop_size", "kind", "effect_size"], sort=False
-    ).agg(
-        num_populations=("pop_code", "nunique"),
-        fold_enrichment_del_median=("fold_enrichment_del", "median"),
-    ).unstack(
-        "pop_size"
-    )
-    return del_enrichment, del_kind_order
-
-
-@app.cell
-def plot_del_enrichment(
-    del_enrichment,
-    del_kind_order,
-    effect_size_order,
-    kind_labels,
-    kind_palette,
-    pop_size_order,
-):
-    with tp.teed(
-        sns.catplot,
-        data=del_enrichment,
-        x="effect_size",
-        y="fold_enrichment_del",
-        order=effect_size_order,
-        hue="kind",
-        hue_order=del_kind_order,
-        palette=kind_palette,
-        col="pop_size",
-        col_order=pop_size_order,
-        col_wrap=2,
-        kind="point",
-        estimator="median",
-        errorbar=("pi", 50),
-        dodge=0.3,
-        height=1.5,
-        aspect=1.1,
-        teeplot_outattrs={"normalization": "DELbg"},
-        teeplot_outexclude=[
-            "palette",
-            "hue_order",
-            "col_order",
-            "col_wrap",
-            "dodge",
-            "order",
-        ],
-        teeplot_show=True,
-        teeplot_subdir=pathlib.Path(__file__).stem,
-    ) as _g:
-        gap_points(*_g.axes.flat, _g.legend)
-        _g.refline(y=1, color="gray", linestyle="--")
-        _g.set(yscale="log")
-        _g.set_axis_labels(
-            "",
-            f"MDC Enrichment\nvs. {kind_labels['DELbg']}\n(median, IQR)",
-        )
-        _g.set_titles(col_template="subgrid {col_name}")
-        for _a in _g.axes.flat:
-            plt.setp(
-                _a.get_xticklabels(),
-                rotation=90,
-                ha="right",
-                va="center",
-                rotation_mode="anchor",
-            )
-        corner_xlabel(_g, right_legend(_g))
-    plt.close("all")
     return
 
 
