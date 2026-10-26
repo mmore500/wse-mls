@@ -26,8 +26,6 @@ with app.setup:
     from pylib import osf_fetch, percentileofscore_grouped
 
     warnings.filterwarnings("ignore", category=DeprecationWarning)
-    # Computer Modern math, e.g., for italic site class qualifiers
-    plt.rcParams["mathtext.fontset"] = "cm"
 
     OSF_SLUG = "6pa9j"
     NUM_SITES = 64
@@ -35,118 +33,6 @@ with app.setup:
     NUM_CONTROL_SITES = 8
     MAX_TREE_LEAVES = 4000
     SEED = 1
-    # dark, middle, and light shades per site class; plots use the middle
-    ETI_PALETTE = {
-        "MLS": ["#004C7A", "#0072B2", "#8FC3E6"],
-        "BENwg": ["#00664F", "#009E73", "#8ED6BE"],
-        "DELbg": ["#9A3F00", "#D55E00", "#F2B48A"],
-        "neutral": ["#6E6E6E", "#A6A6A6", "#DADADA"],
-    }
-
-
-@app.function
-def gap_points(*artists):
-    """Draw point-plot markers as gaps in their connecting lines, layered as:
-    connecting line, white gap, error bar, white halo, then a small dot
-    marking each position."""
-    for artist in artists:
-        if artist is None:
-            continue
-        for line in [*artist.get_lines()]:
-            if line.get_marker() in ("None", None, ""):
-                line.set_zorder(3)  # error bars (and reference lines)
-                continue
-            _is_axes = hasattr(artist, "plot")
-            if not _is_axes:
-                # legend entries: just a dot
-                line.set_linestyle("none")
-                line.set_markerfacecolor(line.get_color())
-                line.set_markersize(7)
-                line.set_markeredgewidth(0)
-                continue
-            # connecting line below a white gap
-            line.set_zorder(1)
-            if not len(line.get_xdata()):
-                continue
-            _xy = line.get_xdata(), line.get_ydata()
-            artist.plot(
-                *_xy,
-                linestyle="none",
-                marker="o",
-                markersize=9,
-                markeredgewidth=0,
-                color="white",
-                zorder=2,
-            )
-            line.set_marker("None")
-            # white halo, then small dot, above the error bar
-            for _size, _color, _z in (
-                (3.6, "white", 4),
-                (2.2, line.get_color(), 5),
-            ):
-                artist.plot(
-                    *_xy,
-                    linestyle="none",
-                    marker="o",
-                    markersize=_size,
-                    markeredgewidth=0,
-                    color=_color,
-                    zorder=_z,
-                )
-
-
-@app.function
-def effect_pct(effect):
-    """Express an effect size label as a percent, passing "neu" through."""
-    return (
-        effect if effect in ("neu", "neutral") else f"{float(effect) * 100:g}"
-    )
-
-
-@app.function
-def right_legend(g):
-    """Replace a FacetGrid's legend with a single-column legend to the right
-    of the panels, vertically centered on them."""
-    _handles = [*g.legend.legend_handles]
-    _labels = [_text.get_text() for _text in g.legend.get_texts()]
-    g.legend.remove()
-    g._legend = None
-    g.tight_layout()
-    _boxes = [_ax.get_position() for _ax in g.axes.flat]
-    return g.figure.legend(
-        _handles,
-        _labels,
-        loc="center left",
-        bbox_to_anchor=(
-            max(_b.x1 for _b in _boxes) + 0.02,
-            (min(_b.y0 for _b in _boxes) + max(_b.y1 for _b in _boxes)) / 2,
-        ),
-        ncol=1,
-        frameon=False,
-        handlelength=0.8,
-        handletextpad=0.5,
-        labelspacing=1.0,
-    )
-
-
-@app.function
-def corner_xlabel(g, legend, text="Effect\nSize (%)"):
-    """Place the x axis label at bottom right, left-aligned under the legend
-    and level with the bottom of the bottom-left panel's tick labels."""
-    _renderer = g.figure.canvas.get_renderer()
-    _to_fig = g.figure.transFigure.inverted()
-    _ticks = [
-        _t.get_window_extent(_renderer).transformed(_to_fig)
-        for _t in g.axes.flat[-2].get_xticklabels()
-    ]
-    g.figure.text(
-        legend.get_window_extent(_renderer).transformed(_to_fig).x0,
-        min(_b.y0 for _b in _ticks),
-        text,
-        ha="left",
-        va="bottom",
-        fontsize=plt.rcParams["axes.labelsize"],
-    )
 
 
 @app.cell(hide_code=True)
@@ -179,7 +65,6 @@ def describe_notebook():
 
     Runs use genome flavor `genome_mlsspectrum_2026_10_15`, which carries eight MLS sites with effect sizes $s_i \\in [1.0, 0.5, 0.25, 0.1, 0.05, 0.025, 0.01, 0.005]$: carriers are clobbered as immigrants into an extinct tile population with probability $s_i$, but have within-population advantage $s'_i = (1 + s_i)^{{\\log_2(N) / 25}} - 1$.
     The other 56 genome sites are neutral.
-    Site classes are labeled with ETI evaluation bar notation, giving each trait's between-group effect above and within-group effect below, and $\\varnothing$ for no effect: MLS $|^{{-}}_{{+}}$ and neutral sites NEU $|^{{\\varnothing}}_{{\\varnothing}}$.
     Runs sweep subgrid size (27, 81, 243, and 0, i.e., the full grid), where subgrids are blocks of tiles between which migration is disabled.
 
     Each subgrid is an isolated metapopulation, so populations are analyzed independently rather than pooled: within each population, the screen asks whether each MLS site
@@ -298,38 +183,8 @@ def tabulate_effect_sizes(config_df):
         .tolist()
     )
     site_effect_sizes = effect_sizes.groupby("site")["effect_size"].first()
-    # ETI evaluation bar notation: between-group effect above, within-group
-    # effect below, with null (crossed circle) for no effect
-    kind_labels = {
-        "MLS": r"MLS$|^{-}_{+}$",
-        "DELbg": r"DEL$\mathit{bg}|^{-}_{\varnothing}$",
-        "BENwg": r"BEN$\mathit{wg}|^{\varnothing}_{+}$",
-        "NEU": r"NEU$|^{\varnothing}_{\varnothing}$",
-    }
-    site_labels = pd.Series(
-        {
-            site: (
-                f"{kind_labels['MLS']} s={site_effect_sizes[site]:g}"
-                if site in focal_sites
-                else kind_labels["NEU"]
-            )
-            for site in range(NUM_SITES)
-        },
-    )
-    mutation_order = [
-        f"{kind_labels['MLS']} s={_s:g}"
-        for _s in sorted(site_effect_sizes.unique(), reverse=True)
-    ] + [kind_labels["NEU"]]
     effect_sizes
-    return (
-        background_sites,
-        control_sites,
-        focal_sites,
-        kind_labels,
-        mutation_order,
-        site_effect_sizes,
-        site_labels,
-    )
+    return background_sites, control_sites, focal_sites, site_effect_sizes
 
 
 @app.cell
@@ -766,20 +621,10 @@ def plot_trees(focal_sites, phylo, pop_size_order, populations):
                 [], [], "d", markersize=0, color="#FFFFFF", label="Mutation | "
             )
             (_h1,) = plt.plot(
-                [],
-                [],
-                "d",
-                markersize=8,
-                color="#6AB81C",
-                label=r"MLS$|^{-}_{+}$",
+                [], [], "d", markersize=8, color="#6AB81C", label="MLS"
             )
             (_h2,) = plt.plot(
-                [],
-                [],
-                "o",
-                markersize=8,
-                color="#C5A3FF",
-                label=r"NEU$|^{\varnothing}_{\varnothing}$",
+                [], [], "o", markersize=8, color="#C5A3FF", label="Neutral"
             )
             plt.legend(
                 handles=[_h0, _h1, _h2],
@@ -848,7 +693,6 @@ def tabulate_mdcs(
     phylo,
     populations,
     site_effect_sizes,
-    site_labels,
 ):
     _cols = [
         "id",
@@ -874,7 +718,11 @@ def tabulate_mdcs(
     mdcs["is_terminal"] = mdcs["is_leaf"] & (mdcs["clade_size"] == 1)
     mdcs["carrier_frac"] = mdcs["carriers"] / mdcs["num_genomes"]
     mdcs["effect_size"] = mdcs["site"].map(site_effect_sizes)
-    mdcs["mutation"] = mdcs["site"].map(site_labels)
+    mdcs["mutation"] = np.where(
+        mdcs["is_focal"],
+        mdcs["effect_size"].map("s={:g}".format),
+        "Neutral",
+    )
     mdcs = mdcs.drop(columns=["is_leaf", "clade_size"]).merge(
         populations[["pop_code", "pop_size", "pop_tiles"]], on="pop_code"
     )
@@ -887,6 +735,14 @@ def tabulate_mdcs(
         clade_duration_mean=("clade_duration", "mean"),
     ).unstack("pop_size")
     return (mdcs,)
+
+
+@app.cell
+def define_orders(site_effect_sizes):
+    mutation_order = [
+        f"s={s:g}" for s in sorted(site_effect_sizes.unique(), reverse=True)
+    ] + ["Neutral"]
+    return (mutation_order,)
 
 
 @app.cell(hide_code=True)
@@ -909,7 +765,7 @@ def calc_freq_screen(
     focal_sites,
     mdcs,
     populations,
-    site_labels,
+    site_effect_sizes,
 ):
     _pops = populations.loc[populations["is_full_size"], "pop_code"]
     _counts = (
@@ -948,7 +804,11 @@ def calc_freq_screen(
     freq_screen = pd.concat(_records, ignore_index=True).merge(
         populations[["pop_code", "pop_size", "pop_tiles"]], on="pop_code"
     )
-    freq_screen["mutation"] = freq_screen["site"].map(site_labels)
+    freq_screen["mutation"] = np.where(
+        freq_screen["is_control"],
+        "Neutral",
+        freq_screen["site"].map(site_effect_sizes).map("s={:g}".format),
+    )
     freq_screen["detected"] = freq_screen["poisson_sf_p"] < ALPHA
     freq_screen.groupby(["pop_size", "mutation"], sort=False).agg(
         num_populations=("pop_code", "nunique"),
@@ -978,17 +838,11 @@ def plot_freq_enrichment(freq_screen, mutation_order, pop_size_order):
         teeplot_show=True,
         teeplot_subdir=pathlib.Path(__file__).stem,
     ) as _ax:
-        gap_points(_ax, _ax.get_legend())
         _ax.axhline(1, color="gray", linestyle="--", zorder=0)
         _ax.set_yscale("log")
-        _ax.set_xlabel("Mutation (site class and effect size)")
-        _ax.set_ylabel("MDC Enrichment\n(median, IQR)")
-        plt.setp(
-            _ax.get_xticklabels(),
-            rotation=30,
-            ha="right",
-            rotation_mode="anchor",
-        )
+        _ax.set_xlabel("Mutation (effect size)")
+        _ax.set_ylabel("MDC Fold Enrichment\n(median, IQR)")
+        _ax.tick_params(axis="x", rotation=30)
         sns.move_legend(
             _ax,
             "upper left",
@@ -1020,17 +874,11 @@ def plot_freq_detection(freq_screen, mutation_order, pop_size_order):
         teeplot_show=True,
         teeplot_subdir=pathlib.Path(__file__).stem,
     ) as _ax:
-        gap_points(_ax, _ax.get_legend())
         _ax.axhline(ALPHA, color="gray", linestyle="--", zorder=0)
         _ax.set_ylim(-0.05, 1.05)
-        _ax.set_xlabel("Mutation (site class and effect size)")
+        _ax.set_xlabel("Mutation (effect size)")
         _ax.set_ylabel("Detection Rate\n(frequency screen)")
-        plt.setp(
-            _ax.get_xticklabels(),
-            rotation=30,
-            ha="right",
-            rotation_mode="anchor",
-        )
+        _ax.tick_params(axis="x", rotation=30)
         sns.move_legend(
             _ax,
             "upper left",
@@ -1217,19 +1065,11 @@ def plot_fitness_percentiles(
         teeplot_show=True,
         teeplot_subdir=pathlib.Path(__file__).stem,
     ) as _g:
-        gap_points(*_g.axes.flat, _g.legend)
         _g.refline(y=50, color="gray", linestyle="--")
         _g.set_axis_labels(
-            "Mutation (site class and effect size)",
-            "Mean MDC Percentile\n(median, IQR)",
+            "Mutation (effect size)", "Mean MDC Percentile\n(median, IQR)"
         )
-        for _a in _g.axes.flat:
-            plt.setp(
-                _a.get_xticklabels(),
-                rotation=30,
-                ha="right",
-                rotation_mode="anchor",
-            )
+        _g.tick_params(axis="x", rotation=30)
         _g.legend.set_title("Subgrid")
     return
 
@@ -1268,20 +1108,12 @@ def plot_fitness_detection(fitness_detection, mutation_order, pop_size_order):
             teeplot_show=True,
             teeplot_subdir=pathlib.Path(__file__).stem,
         ) as _g:
-            gap_points(*_g.axes.flat, _g.legend)
             _g.refline(y=ALPHA, color="gray", linestyle="--")
             _g.set(ylim=(-0.05, 1.05))
             _g.set_axis_labels(
-                "Mutation (site class and effect size)",
-                "Detection Rate\n(fitness screen)",
+                "Mutation (effect size)", "Detection Rate\n(fitness screen)"
             )
-            for _a in _g.axes.flat:
-                plt.setp(
-                    _a.get_xticklabels(),
-                    rotation=30,
-                    ha="right",
-                    rotation_mode="anchor",
-                )
+            _g.tick_params(axis="x", rotation=30)
             _g.legend.set_title("Subgrid")
             _g.figure.suptitle(f"normalization={_norm}", y=1.02)
         plt.close("all")
@@ -1294,7 +1126,7 @@ def delimit_detectability():
     ## Detectability Summary
 
     Fraction of populations in which each screen detects each site at $\\alpha = {ALPHA}$, by population size (rows) and effect size (columns).
-    The NEU column gives the false positive rate over neutral control sites, and should sit near {ALPHA}.
+    The `Neutral` column gives the false positive rate over neutral control sites, and should sit near {ALPHA}.
     Fitness screens shown use `epoch100` normalization.
 
     Note that sampled fossil genomes per population grow with subgrid size (fossils were sampled with an equal budget per subgrid), so population size and sample size are confounded here.
@@ -1357,283 +1189,13 @@ def plot_detectability(detectability, mutation_order, pop_size_order):
             teeplot_show=True,
             teeplot_subdir=pathlib.Path(__file__).stem,
         ) as _ax:
-            _ax.set_xlabel("Mutation (site class and effect size)")
+            _ax.set_xlabel("Mutation (effect size)")
             _ax.set_ylabel("Subgrid")
             _ax.set_title(_screen)
-            plt.setp(
-                _ax.get_xticklabels(),
-                rotation=30,
-                ha="right",
-                rotation_mode="anchor",
-            )
+            _ax.tick_params(axis="x", rotation=30)
             _ax.tick_params(axis="y", rotation=0)
             _ax.figure.set_size_inches(6, 2.4)
         plt.close("all")
-    return
-
-
-@app.cell(hide_code=True)
-def delimit_by_kind():
-    mo.md(f"""
-    ## Detectability by Site Class
-
-    The same screen results, recast with effect size on the x axis, site class as color, and subgrid size as columns.
-    Neutral control sites appear as their own x position.
-    Error bars are 95% bootstrap confidence intervals over populations; the dashed line marks $\\alpha = {ALPHA}$.
-    Fitness screens shown use `epoch100` normalization.
-    """)
-    return
-
-
-@app.cell
-def tabulate_by_kind(fitness_detection, freq_screen, kind_labels):
-    def _split_mutation(df):
-        _parts = df["mutation"].str.extract(r"^(.+) s=(\S+)$")
-        return df.assign(
-            kind=_parts[0].fillna(kind_labels["NEU"]),
-            effect_size=_parts[1].fillna("neu").map(effect_pct),
-        )
-
-    by_kind = pd.concat(
-        [
-            freq_screen.assign(screen="frequency"),
-            *(
-                fitness_detection[
-                    (fitness_detection["normalization"] == "epoch100")
-                    & (fitness_detection["stat"] == _stat)
-                    & (fitness_detection["subset"] == _subset)
-                ].assign(screen=f"fitness {_stat} {_subset}")
-                for _stat in ("carriers", "clade_duration")
-                for _subset in ("all", "inner_f75")
-            ),
-        ],
-        ignore_index=True,
-    )[
-        [
-            "screen",
-            "pop_code",
-            "pop_size",
-            "site",
-            "mutation",
-            "detected",
-            "site_mean_pct",
-        ]
-    ].pipe(
-        _split_mutation
-    )
-    kind_order = [
-        kind_labels[_kind]
-        for _kind in ("NEU", "BENwg", "DELbg", "MLS")
-        if kind_labels[_kind] in set(by_kind["kind"])
-    ]
-    effect_size_order = ["neu"] + sorted(
-        set(by_kind["effect_size"]) - {"neu"}, key=float
-    )
-    kind_palette = {
-        kind_labels[_kind]: ETI_PALETTE[_key][1]
-        for _kind, _key in (
-            ("NEU", "neutral"),
-            ("BENwg", "BENwg"),
-            ("DELbg", "DELbg"),
-            ("MLS", "MLS"),
-        )
-    }
-    freq_by_kind = freq_screen.pipe(_split_mutation)
-    by_kind.groupby(["screen", "pop_size", "kind", "effect_size"], sort=False)[
-        "detected"
-    ].mean().unstack("pop_size")
-    return by_kind, effect_size_order, freq_by_kind, kind_order, kind_palette
-
-
-@app.cell
-def plot_detection_by_kind(
-    by_kind,
-    effect_size_order,
-    kind_order,
-    kind_palette,
-    pop_size_order,
-):
-    for _screen, _df in by_kind.groupby("screen", sort=False):
-        with tp.teed(
-            sns.catplot,
-            data=_df.astype({"detected": float}),
-            x="effect_size",
-            y="detected",
-            order=effect_size_order,
-            hue="kind",
-            hue_order=kind_order,
-            palette=kind_palette,
-            col="pop_size",
-            col_order=pop_size_order,
-            col_wrap=2,
-            kind="point",
-            errorbar=("ci", 95),
-            n_boot=1000,
-            seed=SEED,
-            dodge=0.3,
-            height=1.8,
-            aspect=1.6,
-            teeplot_outattrs={"screen": _screen.replace(" ", "-")},
-            teeplot_outexclude=[
-                "palette",
-                "hue_order",
-                "col_order",
-                "col_wrap",
-                "dodge",
-                "order",
-                "seed",
-            ],
-            teeplot_show=True,
-            teeplot_subdir=pathlib.Path(__file__).stem,
-        ) as _g:
-            gap_points(*_g.axes.flat, _g.legend)
-            _g.refline(y=ALPHA, color="gray", linestyle="--")
-            _g.set(ylim=(-0.05, 1.05))
-            _g.set_axis_labels("", f"Detection Rate\n({_screen})")
-            _g.set_titles(col_template="subgrid {col_name}")
-            for _a in _g.axes.flat:
-                plt.setp(
-                    _a.get_xticklabels(),
-                    rotation=30,
-                    ha="right",
-                    rotation_mode="anchor",
-                )
-            corner_xlabel(_g, right_legend(_g))
-        plt.close("all")
-    return
-
-
-@app.cell(hide_code=True)
-def delimit_fitness_pct_by_kind():
-    mo.md(r"""
-    ## MDC Size and Duration by Site Class
-
-    The fitness screen's underlying measurement: each site's mean MDC percentile for clade size (`carriers`) and clade duration, ranked against background (neutral) MDCs within the same population and 100-update origin epoch.
-    All MDCs are included.
-    The dashed line at 50 marks parity with background; lower values mean smaller or shorter-lived clades.
-    Points are medians over populations, with error bars spanning the interquartile range.
-    """)
-    return
-
-
-@app.cell
-def plot_fitness_pct_by_kind(
-    by_kind,
-    effect_size_order,
-    kind_order,
-    kind_palette,
-    pop_size_order,
-):
-    _stat_names = {
-        "carriers": "Clade Size",
-        "clade_duration": "Clade Duration",
-    }
-    # all MDCs subset only
-    _fitness = by_kind[
-        by_kind["screen"].str.startswith("fitness ")
-        & by_kind["screen"].str.endswith(" all")
-    ]
-    for _screen, _df in _fitness.groupby("screen", sort=False):
-        _stat = _screen.split(" ")[1]
-        with tp.teed(
-            sns.catplot,
-            data=_df.dropna(subset=["site_mean_pct"]),
-            x="effect_size",
-            y="site_mean_pct",
-            order=effect_size_order,
-            hue="kind",
-            hue_order=kind_order,
-            palette=kind_palette,
-            col="pop_size",
-            col_order=pop_size_order,
-            col_wrap=2,
-            kind="point",
-            estimator="median",
-            errorbar=("pi", 50),
-            dodge=0.3,
-            height=1.8,
-            aspect=1.6,
-            teeplot_outattrs={"screen": _screen.replace(" ", "-")},
-            teeplot_outexclude=[
-                "palette",
-                "hue_order",
-                "col_order",
-                "col_wrap",
-                "dodge",
-                "order",
-            ],
-            teeplot_show=True,
-            teeplot_subdir=pathlib.Path(__file__).stem,
-        ) as _g:
-            gap_points(*_g.axes.flat, _g.legend)
-            _g.refline(y=50, color="gray", linestyle="--")
-            _g.set_axis_labels(
-                "",
-                f"{_stat_names[_stat]}\nPercentile\n(median, IQR)",
-            )
-            _g.set_titles(col_template="subgrid {col_name}")
-            for _a in _g.axes.flat:
-                plt.setp(
-                    _a.get_xticklabels(),
-                    rotation=30,
-                    ha="right",
-                    rotation_mode="anchor",
-                )
-            corner_xlabel(_g, right_legend(_g))
-        plt.close("all")
-    return
-
-
-@app.cell
-def plot_enrichment_by_kind(
-    effect_size_order,
-    freq_by_kind,
-    kind_order,
-    kind_palette,
-    pop_size_order,
-):
-    with tp.teed(
-        sns.catplot,
-        data=freq_by_kind,
-        x="effect_size",
-        y="fold_enrichment",
-        order=effect_size_order,
-        hue="kind",
-        hue_order=kind_order,
-        palette=kind_palette,
-        col="pop_size",
-        col_order=pop_size_order,
-        col_wrap=2,
-        kind="point",
-        estimator="median",
-        errorbar=("pi", 50),
-        dodge=0.3,
-        height=1.8,
-        aspect=1.6,
-        teeplot_outexclude=[
-            "palette",
-            "hue_order",
-            "col_order",
-            "col_wrap",
-            "dodge",
-            "order",
-        ],
-        teeplot_show=True,
-        teeplot_subdir=pathlib.Path(__file__).stem,
-    ) as _g:
-        gap_points(*_g.axes.flat, _g.legend)
-        _g.refline(y=1, color="gray", linestyle="--")
-        _g.set_axis_labels("", "MDC Enrichment\n(median, IQR)")
-        _g.set_titles(col_template="subgrid {col_name}")
-        for _a in _g.axes.flat:
-            plt.setp(
-                _a.get_xticklabels(),
-                rotation=30,
-                ha="right",
-                rotation_mode="anchor",
-            )
-        corner_xlabel(_g, right_legend(_g))
-    plt.close("all")
     return
 
 
