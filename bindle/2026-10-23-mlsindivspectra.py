@@ -673,9 +673,31 @@ def split_populations(config_df, phylo_pruned):
     ].transform("first")
     _phylo_split["subgrid"] = (_phylo_split["pop_code"] % 2**32).astype(int)
     # the split tree is kept only within this cell, to bound memory use
-    _config = config_df.select(
-        "config", "nRow", "nCol", "nRowSubgrid", "nColSubgrid", "tilePopSize"
-    ).to_pandas()
+    # cast grid dimensions from unsigned dtypes, which would wrap on the
+    # negation in the ceiling division below
+    _config = (
+        config_df.select(
+            "config",
+            "nRow",
+            "nCol",
+            "nRowSubgrid",
+            "nColSubgrid",
+            "tilePopSize",
+        )
+        .to_pandas()
+        .astype(
+            {
+                col: "int64"
+                for col in (
+                    "nRow",
+                    "nCol",
+                    "nRowSubgrid",
+                    "nColSubgrid",
+                    "tilePopSize",
+                )
+            },
+        )
+    )
     _leaves = _phylo_split[_phylo_split["is_leaf"]]
     populations = (
         _leaves.groupby("pop_code")
