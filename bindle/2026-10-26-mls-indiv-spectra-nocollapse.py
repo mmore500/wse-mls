@@ -1406,7 +1406,7 @@ def delimit_fit_diagnostics():
     ## Fit Diagnostics
 
     These plots compare observed trait gains with those expected under the calibrated allmdc fit, recomputed from the estimator's own branch partitions, calibrated branch lengths, and survival times (via `phyloframe.legacy._impl`).
-    Branches whose parent lacks a trait are grouped by clade size (1 for pendant branches) and binned by calibrated branch length.
+    Branches whose parent lacks a trait are grouped by clade size (1 for pendant branches) and binned by calibrated branch length, into bins of equal total length (so, about equal expected neutral gains).
 
     Two fits are compared:
 
@@ -1760,8 +1760,12 @@ def bin_by_length(diagnostic_fits, fit_diagnostics):
     ]:
         for _trait, _part in _df.groupby("trait"):
             _part = _part.sort_values("length")
-            # equal-occupancy bins by calibrated length
-            _cum = _part["num_trials"].cumsum() / _part["num_trials"].sum()
+            # bins of equal total calibrated length (so, about equal
+            # expected neutral gains), rather than equal branch counts,
+            # which would crowd short, uninformative branches into many
+            # noisy bins
+            _weight = _part["num_trials"] * _part["length"]
+            _cum = _weight.cumsum() / _weight.sum()
             _bin = np.minimum((_cum * _num_bins).astype(int), _num_bins - 1)
             _agg = (
                 _part.assign(
