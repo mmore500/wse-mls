@@ -1421,10 +1421,8 @@ def delimit_fit_diagnostics():
 
 @app.cell
 def calc_fit_diagnostics(neutral_sites, phylo, site_info, trait_names):
-    from scipy import sparse
-    from scipy import special
-
     from phyloframe.legacy import _impl as pfl_impl
+    from scipy import sparse, special
 
     _df = pl.from_pandas(
         phylo[["id", "ancestor_id", "origin_time", *trait_names]],
