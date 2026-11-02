@@ -49,8 +49,15 @@ for notebook in "${notebooks[@]}"; do
   # prints "Export was successful, but some cells failed to execute." with
   # no traceback. Capture the status, then dump cell tracebacks from the
   # produced ipynb so CI logs show what actually failed.
+  # notebooks that declare their own dependencies (PEP 723 inline script
+  # metadata) run in an isolated uv environment built from them
+  sandbox_flag="--no-sandbox"
+  if grep -q '^# /// script' "${notebook}"; then
+    sandbox_flag="--sandbox"
+  fi
   set +e
   marimo export ipynb \
+    "${sandbox_flag}" \
     --include-outputs \
     --sort topological \
     -f \
