@@ -3,9 +3,10 @@
 # dependencies = [
 #     "marimo==0.23.2",
 #     "matplotlib==3.10.9",
+#     "numba==0.61.2",
 #     "numpy==2.1.2",
 #     "pandas==2.2.3",
-#     "phyloframe==0.14.0",
+#     "phyloframe @ git+https://github.com/mmore500/phyloframe.git@890559b39e4c1439ee5828b1c70d151cad402159",
 #     "polars==1.36.1",
 #     "pyarrow==16.1.0",
 #     "requests==2.33.1",
@@ -1058,6 +1059,15 @@ def plot_mdc_tests(effect_size_order, kind_order, kind_palette, mdc_tests):
 
 
 @app.cell(hide_code=True)
+def note_mdc_tests():
+    mo.md("""
+    MLS and `DELbg` MDCs are smaller and shorter-lived than neutral MDCs at every effect size, increasingly so with effect size, and indistinguishable from each other.
+    `BENwg` MDCs are about the size and duration of neutral MDCs (probability of superiority within about 0.01 of 0.5), so these tests detect between-host cost but not within-host advantage.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
 def delimit_estimates():
     mo.md(f"""
     ## Gain and Selection Estimates
@@ -1393,12 +1403,14 @@ def plot_allmdc_vs_pendant(estimates_by_site, kind_order, kind_palette):
 
 @app.cell(hide_code=True)
 def note_estimates():
-    mo.md("""
+    mo.md(r"""
     ### Notes
 
-    - Gain ratios are expected near the configured within-host gain probability over neutral sites' for `BENwg` and MLS sites (about 1.99, 1.39, 1.14, and 1.07 at the four effect sizes), and near 1 for `DELbg` and neutral sites.
-    - Neutral sites' selection estimates are not 0, so absolute selection is shown alongside selection relative to neutral sites.
-    - Between-host cost should make MLS and `DELbg` sites' selection more negative than neutral sites', increasingly so with effect size; `BENwg` sites have no between-host cost.
+    - With calibrated branch lengths, neutral and `BENwg` sites' selection estimates are near 0, while MLS and `DELbg` sites' are negative, about $-1.5 \times 10^{-3}$ per `origin_time` unit at $s = 5\%$, falling roughly in proportion to effect size.
+    - MLS and `DELbg` sites' estimates are about equal, so the between-host (transmission) cost dominates selection; the within-host advantage shows up in the gain ratio instead.
+    - With raw branch lengths, neutral and `BENwg` sites' selection estimates are about $-2 \times 10^{-4}$ rather than 0, and MLS and `DELbg` sites' are more negative than calibrated ones (about $-2.5$ to $-3.5 \times 10^{-3}$ at $s = 5\%$).
+    - Estimated gain ratios rise with configured within-host gain ratio for `BENwg` and MLS sites, but fall short of it: about 1.5–1.8 at $s = 5\%$ (configured 1.99), about 1.2 at $s = 2.5\%$ (1.39), and about 1 at $s \leq 1\%$ (1.14 and 1.07).
+    - `DELbg` and neutral sites' gain ratios are near 1, except where few MDCs make them noisy (e.g., `DELbg` at $s = 5\%$).
     """)
     return
 

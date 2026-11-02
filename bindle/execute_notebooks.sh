@@ -49,15 +49,36 @@ for notebook in "${notebooks[@]}"; do
   # prints "Export was successful, but some cells failed to execute." with
   # no traceback. Capture the status, then dump cell tracebacks from the
   # produced ipynb so CI logs show what actually failed.
-  # notebooks that declare their own dependencies (PEP 723 inline script
-  # metadata) run in an isolated uv environment built from them
-  sandbox_flag="--no-sandbox"
+  # Notebooks that declare their own dependencies (PEP 723 inline script
+  # metadata) run in an isolated uv environment built from them. This
+  # wraps `marimo export` in `uv run` directly, rather than using
+  # `marimo export --sandbox`, which rewrites the notebook's dependency
+  # list (e.g., replacing git pins with installed versions) and does not
+  # pass through the export's exit status.
+  runner=()
   if grep -q '^# /// script' "${notebook}"; then
-    sandbox_flag="--sandbox"
+    requirements_txt="$(mktemp)"
+    python3 - "${notebook}" > "${requirements_txt}" <<'PYEOF'
+import re
+import sys
+
+text = open(sys.argv[1]).read()
+block = re.search(r"^# /// script$(.*?)^# ///$", text, re.M | re.S)
+deps = re.search(r"^# dependencies = \[$(.*?)^# \]$", block.group(1), re.M | re.S)
+print("\n".join(re.findall(r'^#\s+"([^"]+)",?$', deps.group(1), re.M)))
+PYEOF
+    echo "isolated environment requirements:"
+    cat "${requirements_txt}"
+    runner=(
+      uv run --isolated --no-project
+      --python "$(command -v python3)"
+      --with-requirements "${requirements_txt}"
+      --with nbformat
+    )
   fi
   set +e
-  marimo export ipynb \
-    "${sandbox_flag}" \
+  "${runner[@]}" marimo export ipynb \
+    --no-sandbox \
     --include-outputs \
     --sort topological \
     -f \
