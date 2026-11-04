@@ -1265,17 +1265,20 @@ def plot_gain_ratio_vs_configured(estimates_by_site, kind_order, kind_palette):
             teeplot_show=True,
             teeplot_subdir=pathlib.Path(__file__).stem,
         ) as _g:
-            _hi = max(
-                _df["configured_gain_ratio"].max(), _df["gain_ratio"].max()
-            )
+            _values = _df[["configured_gain_ratio", "gain_ratio"]]
+            _values = _values[_values > 0]
+            _lo, _hi = _values.min().min(), _values.max().max()
             for _ax in _g.axes.flat:
                 _ax.plot(
-                    [0.8, _hi * 1.05],
-                    [0.8, _hi * 1.05],
+                    [_lo / 1.1, _hi * 1.1],
+                    [_lo / 1.1, _hi * 1.1],
                     color="gray",
                     linestyle="--",
                     zorder=0,
                 )
+                # log axes, as gain ratios can span orders of magnitude
+                _ax.set_xscale("log")
+                _ax.set_yscale("log")
             _g.set_axis_labels(
                 "Configured\nGain Ratio", "Estimated\nGain Ratio"
             )
@@ -1670,7 +1673,7 @@ def plot_obs_exp_by_size(fit_diagnostics, panel_layout):
         _fig, _axes = plt.subplots(
             1,
             len(panel_layout),
-            figsize=(2.1 * len(panel_layout), 2.3),
+            figsize=(2.1 * len(panel_layout), 2.9),
             sharey=True,
         )
         for _ax, _row in zip(_axes, panel_layout):
@@ -1710,7 +1713,15 @@ def plot_obs_exp_by_size(fit_diagnostics, panel_layout):
             _ax.set_xticks(range(len(_sizes)), _sizes)
             _ax.set_title(_row[0][1])
             _ax.set_xlabel("Clade Size\n(Leaves)")
-            _ax.legend(fontsize="x-small", frameon=False, handlelength=1.2)
+            _ax.legend(
+                loc="upper center",
+                bbox_to_anchor=(0.5, -0.45),
+                ncol=2,
+                fontsize="x-small",
+                frameon=False,
+                handlelength=1.2,
+                columnspacing=0.8,
+            )
         _axes[0].set_ylabel("Observed ÷\nExpected Gains")
         _fig.legend(
             [
@@ -1826,7 +1837,9 @@ def plot_length_bins(length_bin_groups, length_bins, panel_layout):
             max(map(len, panel_layout)),
             figsize=(9, 8),
             sharex=True,
-            sharey=True,
+            # log axes share a scale; linear axes fit each panel, as strong
+            # effects (e.g., large gain ratios) would flatten the others
+            sharey=log_axes,
             squeeze=False,
         )
         for _axrow, _row in zip(_axes, panel_layout):
@@ -1880,10 +1893,24 @@ def plot_length_bins(length_bin_groups, length_bins, panel_layout):
                 if log_axes:
                     _ax.set_xscale("log")
                     _ax.set_yscale("log")
-                elif relative:
-                    # short branches have few expected gains, so wide
-                    # intervals; clip to the informative range
-                    _ax.set_ylim(0, 2.5)
+                else:
+                    # fit each panel to its fitted and reference lines and
+                    # observed bins, not to the wide intervals of bins with
+                    # few expected gains (e.g., short branches)
+                    _shown = _d[_d["group"].isin(groups)]
+                    _lines = _shown[
+                        [
+                            "share with survival time",
+                            "share without survival time",
+                            "share neutral",
+                            "share own rate",
+                        ]
+                    ].to_numpy()
+                    _top = 1.15 * max(
+                        np.nanmax(_lines),
+                        np.nanquantile(_shown["share"], 0.95),
+                    )
+                    _ax.set_ylim(0, max(_top, 2.5) if relative else _top)
         for _ax in _axes[-1]:
             _ax.set_xlabel("Calibrated\nBranch Length")
         for _ax in _axes[:, 0]:
