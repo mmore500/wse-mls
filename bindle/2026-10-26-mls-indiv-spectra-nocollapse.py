@@ -1673,7 +1673,7 @@ def plot_obs_exp_by_size(fit_diagnostics, panel_layout):
         _fig, _axes = plt.subplots(
             1,
             len(panel_layout),
-            figsize=(2.1 * len(panel_layout), 2.9),
+            figsize=(2.1 * len(panel_layout), 3.1),
             sharey=True,
         )
         for _ax, _row in zip(_axes, panel_layout):
@@ -1715,7 +1715,7 @@ def plot_obs_exp_by_size(fit_diagnostics, panel_layout):
             _ax.set_xlabel("Clade Size\n(Leaves)")
             _ax.legend(
                 loc="upper center",
-                bbox_to_anchor=(0.5, -0.45),
+                bbox_to_anchor=(0.5, -0.62),
                 ncol=2,
                 fontsize="x-small",
                 frameon=False,
