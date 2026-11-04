@@ -1201,15 +1201,17 @@ def plot_estimates(
     kind_order,
     kind_palette,
 ):
-    _ylabels = {
-        "gain_ratio": "Gain Ratio",
-        "selection": "Selection\n(per origin_time unit)",
-        "relative_selection": "Selection\nRelative to Neutral",
-    }
+    # gain ratios also on a log scale, as they can span orders of magnitude
+    _plots = [
+        ("gain_ratio", "Gain Ratio", False),
+        ("gain_ratio", "Gain Ratio", True),
+        ("selection", "Selection\n(per origin_time unit)", False),
+        ("relative_selection", "Selection\nRelative to Neutral", False),
+    ]
     for (_method, _calibration), _df in estimates_by_site.groupby(
         ["method", "calibration"], sort=False
     ):
-        for _stat, _label in _ylabels.items():
+        for _stat, _label, _log in _plots:
             with tp.teed(
                 sns.catplot,
                 data=_df,
@@ -1224,16 +1226,19 @@ def plot_estimates(
                 dodge=0.3,
                 height=1.8,
                 aspect=1.3,
+                log_scale=(False, _log),
                 teeplot_outattrs={
                     "method": _method,
                     "calibration": _calibration,
                     "stat": _stat.replace("_", "-"),
+                    **({"yscale": "log"} if _log else {}),
                 },
                 teeplot_outexclude=[
                     "palette",
                     "hue_order",
                     "dodge",
                     "order",
+                    "log_scale",
                 ],
                 teeplot_show=True,
                 teeplot_subdir=pathlib.Path(__file__).stem,
