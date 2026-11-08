@@ -639,6 +639,501 @@ def fit_sample_estimates(phylo, trait_names, neutral_traits, batches):
     return pd.concat(_results, ignore_index=True)
 
 
+@app.function
+def compute_fit_diagnostics(phylo, trait_names, neutral_traits, batches):
+    """Recompute the calibrated allmdc fit's per-partition expected gains,
+    with and without survival time, from the estimator's internals (see
+    `2026-11-01-mls-indiv-spectra-fullgrid-fossils`). Returns per-partition
+    diagnostics and per-trait fits."""
+    from phyloframe.legacy import _impl as pfl_impl
+    from scipy import sparse, special
+
+    _df = pl.from_pandas(
+        phylo[["id", "ancestor_id", "origin_time", *trait_names]],
+    )
+    _neutral = list(neutral_traits)
+    _settings = dict(
+        calibrate_neighborhood_fractions=(
+            0.005,
+            0.01,
+            0.025,
+            0.05,
+            0.1,
+            0.25,
+            0.5,
+            1.0,
+        ),
+        calibrate_num_partitions=4096,
+        calibrate_size_partition_ratio=2.0,
+        calibrate_size_partition_min_neutral_gains=20,
+    )
+    _batches = batches
+    _diagnostics, _fits = [], []
+    for _i, _batch in enumerate(_batches):
+        _names = [*_batch, *_neutral]
+        _neutral_idx = list(range(len(_batch), len(_names)))
+        _exposure = pfl_impl.tgs_prepare_polars(
+            _df, trait_transitions=_names, caller="calc_fit_diagnostics"
+        )
+        _partitioning = pfl_impl.tgs_partition_allmdc_exposures(
+            exposure_df=_exposure,
+            neutral_traits=_neutral_idx,
+            trait_names=_names,
+            calibrate=True,
+            **_settings,
+        )
+        _data, _shares = pfl_impl.tgs_calc_allmdc_data(
+            exposure_df=_exposure,
+            partitioning=_partitioning,
+            weights=np.ones(len(_exposure)),
+            neutral_traits=_neutral_idx,
+            calibrate=True,
+        )
+        # recover each row's partition: rows are trait-major, over
+        # partitions with branches that started without the trait
+        _units, _gains = pfl_impl.tgs_find_trait_exposures(_exposure)
+        _num_partitions = _partitioning["partitions"].max() + 1
+        _data["partition"] = np.concatenate(
+            [
+                np.flatnonzero(
+                    np.bincount(
+                        _partitioning["partitions"][_u],
+                        minlength=_num_partitions,
+                    )
+                    > 0
+                )
+                for _u in _units
+            ],
+        )
+        # each partition lies within one size partition (by clade size)
+        _clade_sizes = _exposure["clade_size"].to_numpy()
+        _size_partitions = pfl_impl.tgs_calc_size_partitions(
+            clade_sizes=_clade_sizes,
+            neutral_gain_positions=np.concatenate(
+                [_gains[_r] for _r in _neutral_idx]
+            ),
+            calibrate=True,
+            calibrate_size_partition_ratio=2.0,
+            calibrate_size_partition_min_neutral_gains=20,
+        )
+        _size_of_partition = np.zeros(_num_partitions, dtype=int)
+        _size_of_partition[_partitioning["partitions"]] = _size_partitions
+        _labels = {
+            _sp: (f"{_lo}" if _lo == _hi else f"{_lo}–{_hi}")
+            for _sp in np.unique(_size_partitions)
+            for _lo, _hi in [
+                (
+                    _clade_sizes[_size_partitions == _sp].min(),
+                    _clade_sizes[_size_partitions == _sp].max(),
+                ),
+            ]
+        }
+        _data["size_partition"] = _size_of_partition[_data["partition"]]
+        _data["clade_size"] = _data["size_partition"].map(_labels)
+        del _exposure
+
+        _codes = _data["trait"].cat.codes.to_numpy()
+        _lengths = _data["length"].to_numpy()
+        _single = sparse.csr_matrix(np.ones((len(_data), 1)))
+        for _fit, (_fit_shares, _times) in {
+            "with survival time": (
+                _shares,
+                _partitioning["distinct_survival_times"],
+            ),
+            "without survival time": (_single, np.zeros(1)),
+        }.items():
+            _rows = []
+            for __, _part in _data.groupby("trait", observed=False):
+                _calc_nll, _scale = pfl_impl.tgs_make_allmdc_trait_nll(
+                    partitions=_part,
+                    survival_shares=_fit_shares[_part.index],
+                    distinct_survival_times=_times,
+                    growth_exponent_bound=600.0,
+                )
+                _rows.append(
+                    pfl_impl.tgs_fit_allmdc_trait(
+                        calc_nll=_calc_nll,
+                        selection_scale=_scale,
+                        partitions=_part,
+                        loss_rate=0.0,
+                        selection_starts=(0.0, -0.3, -1.8),
+                    ),
+                )
+            _fit_df = pd.DataFrame(_rows).assign(trait=_names, fit=_fit)
+            _fits.append(_fit_df.assign(batch=_i))
+            _g = _fit_df["gain_rate"].to_numpy()[_codes]
+            _c = _fit_df["selection"].to_numpy()[_codes]
+            # expected gain share per branch, averaging the survival term
+            # exactly over each partition's survival times
+            _effective = _lengths * special.exprel(
+                np.minimum(_c * _lengths, 600.0)
+            )
+            _sh = _fit_shares.tocsr()
+            _r = np.repeat(np.arange(_sh.shape[0]), np.diff(_sh.indptr))
+            _survival = np.bincount(
+                _r,
+                _sh.data
+                * np.exp(np.minimum(_c[_r] * _times[_sh.indices], 600.0)),
+                minlength=_sh.shape[0],
+            )
+            _data[f"expected {_fit}"] = (
+                _data["num_trials"] * _g * _effective * _survival
+            )
+        del _shares
+        _data["trait"] = np.asarray(_names)[_codes]
+        _keep = _data["trait"].isin(_batch) | (_i == 0)
+        _diagnostics.append(_data[_keep].drop(columns=["partition"]))
+    del _df
+    diagnostic_fits = pd.concat(_fits, ignore_index=True)
+    # neutral sites' fits must agree across calls
+    _neu = diagnostic_fits[diagnostic_fits["trait"].isin(_neutral)]
+    assert (
+        _neu.groupby(["trait", "fit"])["gain_rate"]
+        .agg(lambda x: np.ptp(x) <= 1e-6 * x.abs().max())
+        .all()
+    )
+    diagnostic_fits = diagnostic_fits.drop_duplicates(["trait", "fit"]).drop(
+        columns="batch"
+    )
+    # reference gain rate: mean over neutral sites (other neutral sites,
+    # for a neutral site), from the fit with survival time
+    _with = diagnostic_fits[diagnostic_fits["fit"] == "with survival time"]
+    _neu_rates = _with.set_index("trait").loc[_neutral, "gain_rate"]
+    diagnostic_fits["neutral_gain_rate"] = [
+        _neu_rates.drop(_t, errors="ignore").mean()
+        for _t in diagnostic_fits["trait"]
+    ]
+    fit_diagnostics = pd.concat(_diagnostics, ignore_index=True)
+    return fit_diagnostics, diagnostic_fits
+
+
+@app.function
+def poisson_interval(count, alpha=0.05):
+    """Exact (Garwood) Poisson confidence interval for an observed count."""
+    count = np.asarray(count, dtype=float)
+    lower = np.where(
+        count > 0, scipy_stats.chi2.ppf(alpha / 2, 2 * count) / 2, 0.0
+    )
+    upper = scipy_stats.chi2.ppf(1 - alpha / 2, 2 * (count + 1)) / 2
+    return lower, upper
+
+
+@app.function
+def shade_palette(kind_key, num):
+    """Shades of a site class's ETI color, from dark to light."""
+    _dark, __, _light = ETI_PALETTE[kind_key]
+    return sns.blend_palette([_dark, _light], max(num, 2))[:num]
+
+
+@app.function
+def make_panel_layout(kind_order, site_info):
+    """One row of panels per site class, one panel per effect size (largest
+    first) or per neutral site: (trait, kind, palette key, label)."""
+    # one row per site class, one column per effect size (largest first),
+    # or per neutral site
+    _kind_keys = dict(zip(kind_order, ["neutral", "BENwg", "DELbg", "MLS"]))
+    panel_layout = []
+    for _kind in kind_order:
+        _sites = site_info[site_info["kind"] == _kind]
+        if _kind.startswith("NEU"):
+            _sites = _sites.sort_values("site")
+        else:
+            _sites = _sites.sort_values(
+                "effect_size", key=lambda x: -x.astype(float)
+            )
+        panel_layout.append(
+            [
+                (
+                    _row["trait"],
+                    _kind,
+                    _kind_keys[_kind],
+                    (
+                        f"NEU site {_row['site']}"
+                        if _kind.startswith("NEU")
+                        else f"s = {_row['effect_size']}%"
+                    ),
+                )
+                for __, _row in _sites.iterrows()
+            ],
+        )
+    return panel_layout
+
+
+@app.function
+def obs_exp_by_size(data, sizes, panel_layout):
+    """Observed / expected gains by clade size, per site class."""
+    _fig, _axes = plt.subplots(
+        1,
+        len(panel_layout),
+        figsize=(2.1 * len(panel_layout), 3.1),
+        sharey=True,
+    )
+    for _ax, _row in zip(_axes, panel_layout):
+        _colors = shade_palette(_row[0][2], len(_row))
+        for _j, ((_trait, _kind, __, _label), _color) in enumerate(
+            zip(_row, _colors)
+        ):
+            _d = (
+                data[data["trait"] == _trait]
+                .set_index("clade_size")
+                .reindex(sizes)
+            )
+            _x = np.arange(len(sizes)) + (_j - 1.5) * 0.06
+            _obs = _d["num_successes"].fillna(0).to_numpy()
+            _lo, _hi = poisson_interval(_obs)
+            for _fit, _style, _marker in (
+                ("with survival time", "-", "o"),
+                ("without survival time", "--", "o"),
+            ):
+                _exp = _d[f"expected {_fit}"].to_numpy()
+                _ratio = np.maximum(_obs, 0.5) / _exp
+                _ax.errorbar(
+                    _x,
+                    _ratio,
+                    yerr=[_ratio - _lo / _exp, _hi / _exp - _ratio],
+                    color=_color,
+                    linestyle=_style,
+                    marker=_marker,
+                    markersize=3.5,
+                    markerfacecolor=(_color if _style == "-" else "white"),
+                    linewidth=1,
+                    elinewidth=0.6,
+                    label=_label if _style == "-" else None,
+                )
+        _ax.axhline(1, color="gray", linestyle=":", zorder=0)
+        _ax.set_yscale("log")
+        _ax.set_xticks(range(len(sizes)), sizes)
+        _ax.set_title(_row[0][1])
+        _ax.set_xlabel("Clade Size\n(Leaves)")
+        _ax.legend(
+            loc="upper center",
+            bbox_to_anchor=(0.5, -0.62),
+            ncol=2,
+            fontsize="x-small",
+            frameon=False,
+            handlelength=1.2,
+            columnspacing=0.8,
+        )
+    _axes[0].set_ylabel("Observed ÷\nExpected Gains")
+    _fig.legend(
+        [
+            plt.Line2D([], [], color="black", linestyle="-"),
+            plt.Line2D([], [], color="black", linestyle="--"),
+        ],
+        ["with survival time", "without survival time"],
+        loc="lower center",
+        bbox_to_anchor=(0.5, 1.0),
+        ncol=2,
+        frameon=False,
+    )
+    _fig.tight_layout()
+
+
+@app.function
+def bin_by_length(fit_diagnostics, diagnostic_fits):
+    """Bin each trait's partitions by calibrated length, for all branches
+    and for each of the first three clade size groups."""
+    _num_bins = 20
+    _sizes = (
+        fit_diagnostics.sort_values("size_partition")["clade_size"]
+        .drop_duplicates()
+        .tolist()[:3]
+    )
+    _cols = [
+        "num_trials",
+        "num_successes",
+        "expected with survival time",
+        "expected without survival time",
+    ]
+    _binned = []
+    for _group, _df in [
+        ("all branches", fit_diagnostics),
+        *(
+            (_size, fit_diagnostics[fit_diagnostics["clade_size"] == _size])
+            for _size in _sizes
+        ),
+    ]:
+        for _trait, _part in _df.groupby("trait"):
+            _part = _part.sort_values("length")
+            # bins of equal total calibrated length (so, about equal
+            # expected neutral gains), rather than equal branch counts,
+            # which would crowd short, uninformative branches into many
+            # noisy bins
+            _weight = _part["num_trials"] * _part["length"]
+            _cum = _weight.cumsum() / _weight.sum()
+            _bin = np.minimum((_cum * _num_bins).astype(int), _num_bins - 1)
+            _agg = (
+                _part.assign(
+                    weighted_length=_part["length"] * _part["num_trials"],
+                    bin=_bin.to_numpy(),
+                )
+                .groupby("bin")[[*_cols, "weighted_length"]]
+                .sum()
+            )
+            _agg["length"] = _agg["weighted_length"] / _agg["num_trials"]
+            _binned.append(
+                _agg.drop(columns="weighted_length")
+                .reset_index()
+                .assign(trait=_trait, group=_group),
+            )
+    length_bins = pd.concat(_binned, ignore_index=True)
+    _lo, _hi = poisson_interval(length_bins["num_successes"])
+    length_bins["share"] = (
+        length_bins["num_successes"] / length_bins["num_trials"]
+    )
+    length_bins["share_lo"] = _lo / length_bins["num_trials"]
+    length_bins["share_hi"] = _hi / length_bins["num_trials"]
+    for _fit in ("with survival time", "without survival time"):
+        length_bins[f"share {_fit}"] = (
+            length_bins[f"expected {_fit}"] / length_bins["num_trials"]
+        )
+    _rates = diagnostic_fits[
+        diagnostic_fits["fit"] == "with survival time"
+    ].set_index("trait")
+    length_bins["share neutral"] = length_bins["length"] * length_bins[
+        "trait"
+    ].map(_rates["neutral_gain_rate"])
+    length_bins["share own rate"] = length_bins["length"] * length_bins[
+        "trait"
+    ].map(_rates["gain_rate"])
+    length_bin_groups = ["all branches", *_sizes]
+    return length_bins, length_bin_groups
+
+
+@app.function
+def gain_share_by_length(data, groups, relative, log_axes, panel_layout):
+    """Binned gain share vs. calibrated branch length, per site."""
+    _shares = [
+        "share",
+        "share_lo",
+        "share_hi",
+        "share with survival time",
+        "share without survival time",
+        "share neutral",
+        "share own rate",
+    ]
+    if relative:
+        data = data.assign(
+            **{_c: data[_c] / data["share neutral"] for _c in _shares},
+        )
+    _fig, _axes = plt.subplots(
+        len(panel_layout),
+        max(map(len, panel_layout)),
+        figsize=(9, 8),
+        sharex=True,
+        # log axes share a scale; linear axes fit each panel, as strong
+        # effects (e.g., large gain ratios) would flatten the others
+        sharey=log_axes,
+        squeeze=False,
+    )
+    for _axrow, _row in zip(_axes, panel_layout):
+        for _ax, (_trait, _kind, _key, _label) in zip(_axrow, _row):
+            _colors = shade_palette(_key, len(groups))
+            if len(groups) == 1:
+                _colors = [ETI_PALETTE[_key][1]]
+            _d = data[data["trait"] == _trait]
+            _first = _d[_d["group"] == groups[0]]
+            for _col, _style in (
+                ("share neutral", (0, (4, 2))),
+                ("share own rate", (0, (6, 2, 1, 2))),
+            ):
+                _ax.plot(
+                    _first["length"],
+                    _first[_col],
+                    color="gray",
+                    linestyle=_style,
+                    linewidth=0.9,
+                    zorder=1,
+                )
+            for _group, _color in zip(groups, _colors):
+                _g = _d[_d["group"] == _group]
+                _ax.errorbar(
+                    _g["length"],
+                    _g["share"],
+                    yerr=[
+                        _g["share"] - _g["share_lo"],
+                        _g["share_hi"] - _g["share"],
+                    ],
+                    color=_color,
+                    linestyle="none",
+                    marker="o",
+                    markersize=2.5,
+                    elinewidth=0.6,
+                    zorder=3,
+                )
+                for _fit, _style in (
+                    ("with survival time", "-"),
+                    ("without survival time", ":"),
+                ):
+                    _ax.plot(
+                        _g["length"],
+                        _g[f"share {_fit}"],
+                        color=_color,
+                        linestyle=_style,
+                        linewidth=1,
+                        zorder=2,
+                    )
+            _ax.set_title(f"{_kind} {_label}", fontsize="small")
+            if log_axes:
+                _ax.set_xscale("log")
+                _ax.set_yscale("log")
+            else:
+                # fit each panel to its fitted and reference lines and
+                # observed bins, not to the wide intervals of bins with
+                # few expected gains (e.g., short branches)
+                _shown = _d[_d["group"].isin(groups)]
+                _lines = _shown[
+                    [
+                        "share with survival time",
+                        "share without survival time",
+                        "share neutral",
+                        "share own rate",
+                    ]
+                ].to_numpy()
+                _top = 1.15 * max(
+                    np.nanmax(_lines),
+                    np.nanquantile(_shown["share"], 0.95),
+                )
+                _ax.set_ylim(0, max(_top, 2.5) if relative else _top)
+    for _ax in _axes[-1]:
+        _ax.set_xlabel("Calibrated\nBranch Length")
+    for _ax in _axes[:, 0]:
+        _ax.set_ylabel(
+            "Gain Share ÷\nNeutral" if relative else "Share\nGaining"
+        )
+    _handles = [
+        *(
+            plt.Line2D([], [], color=_c, marker="o", linestyle="none")
+            for _c in (
+                shade_palette("neutral", len(groups))
+                if len(groups) > 1
+                else [ETI_PALETTE["neutral"][1]]
+            )
+        ),
+        plt.Line2D([], [], color="black", linestyle="-"),
+        plt.Line2D([], [], color="black", linestyle=":"),
+        plt.Line2D([], [], color="gray", linestyle=(0, (4, 2))),
+        plt.Line2D([], [], color="gray", linestyle=(0, (6, 2, 1, 2))),
+    ]
+    _labels = [
+        *(f"clade size {_g}" if _g != "all branches" else _g for _g in groups),
+        "fit with survival time",
+        "fit without survival time",
+        "neutral rate × length",
+        "own rate × length",
+    ]
+    _fig.legend(
+        _handles,
+        _labels,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 1.0),
+        ncol=4,
+        frameon=False,
+        fontsize="small",
+    )
+    _fig.tight_layout()
+
+
 @app.cell(hide_code=True)
 def delimit_analyze():
     mo.md(f"""
@@ -650,6 +1145,7 @@ def delimit_analyze():
     2. Origin times are raised to at least the parent's plus {ORIGIN_TIME_EPSILON}, so every branch has positive length.
     3. Each site's trait state at every node is reconstructed under parsimony without loss: a node has a trait if and only if every leaf of its clade does.
     4. The allmdc and pendant estimators are fit with raw and with neutral-calibrated branch lengths.
+    5. The calibrated allmdc fit's expected gains are recomputed per partition, with and without survival time, for fit diagnostics.
     """)
     return
 
@@ -672,6 +1168,7 @@ def analyze_samples(neutral_sites, site_info):
         [],
         [],
     )
+    _bins, _fits, _obs_exp = [], [], []
     for _sample, _slug in SAMPLES.items():
         print(f"{_sample} ({_slug})")
         _start = time.time()
@@ -692,7 +1189,28 @@ def analyze_samples(neutral_sites, site_info):
                 sample=_sample
             )
         )
-        del _phylo
+        _start_diag = time.time()
+        _diag, _dfits = compute_fit_diagnostics(
+            _phylo, _names, _neutral, _batches
+        )
+        _sample_bins, length_bin_groups = bin_by_length(_diag, _dfits)
+        _bins.append(_sample_bins.assign(sample=_sample))
+        _fits.append(_dfits.assign(sample=_sample))
+        _obs_exp.append(
+            _diag[_diag["clade_size"].isin(length_bin_groups[1:])]
+            .groupby(["trait", "clade_size"], sort=False)[
+                [
+                    "num_successes",
+                    "expected with survival time",
+                    "expected without survival time",
+                ]
+            ]
+            .sum()
+            .reset_index()
+            .assign(sample=_sample)
+        )
+        print(f"  fit diagnostics: {time.time() - _start_diag:.0f}s")
+        del _phylo, _diag
         gc.collect()
         print(f"  total {time.time() - _start:.0f}s")
     sample_summary = pd.DataFrame(_summaries).set_index("sample").T
@@ -705,13 +1223,22 @@ def analyze_samples(neutral_sites, site_info):
     sample_estimates = pd.concat(_estimates, ignore_index=True).merge(
         site_info, on="trait"
     )
+    sample_length_bins = pd.concat(_bins, ignore_index=True)
+    sample_obs_exp = pd.concat(_obs_exp, ignore_index=True)
+    sample_diagnostic_fits = pd.concat(_fits, ignore_index=True).merge(
+        site_info, on="trait"
+    )
     mo.Html(sample_summary.to_html(float_format="{:.4g}".format))
     return (
         cherry_distances,
+        length_bin_groups,
         pe_counts,
         pendant_lengths,
+        sample_diagnostic_fits,
         sample_estimates,
+        sample_length_bins,
         sample_mdcs,
+        sample_obs_exp,
     )
 
 
@@ -1139,6 +1666,80 @@ def plot_power_scatter(kind_order, kind_palette, sample_power):
             _g.set_titles(col_template="{col_name}")
             right_legend(_g)
         plt.close("all")
+    return
+
+
+@app.cell(hide_code=True)
+def delimit_fit_diagnostics():
+    mo.md("""
+    ## Fit Diagnostics
+
+    Per sample, observed trait gains compared with those expected under the calibrated allmdc fit, recomputed from the estimator's own branch partitions, calibrated branch lengths, and survival times (as in `2026-11-03-mls-indiv-spectra-fullgrid-fossils`).
+    Two fits are compared: **with survival time** (the allmdc model) and **without survival time** (refit with every branch's survival time set to 0).
+    Branches whose parent lacks a trait are grouped by clade size and binned by calibrated branch length, into bins of equal total length.
+    For reference, the neutral expectation is the mean neutral gain rate (for a neutral site, the other three's) times calibrated length, and the trait's own expectation is its fitted gain rate times calibrated length.
+    Error bars are 95% Poisson intervals.
+    """)
+    return
+
+
+@app.cell
+def plot_fit_diagnostics(
+    kind_order,
+    length_bin_groups,
+    sample_length_bins,
+    sample_obs_exp,
+    site_info,
+):
+    _layout = make_panel_layout(kind_order, site_info)
+    for _sample in SAMPLES:
+        tp.tee(
+            obs_exp_by_size,
+            data=sample_obs_exp[sample_obs_exp["sample"] == _sample],
+            sizes=length_bin_groups[1:],
+            panel_layout=_layout,
+            teeplot_outattrs={"fit": "calibrated-allmdc", "sample": _sample},
+            teeplot_outexclude=["sizes", "panel_layout"],
+            teeplot_show=True,
+            teeplot_subdir=pathlib.Path(__file__).stem,
+        )
+        plt.close("all")
+        for _groups, _relative, _log in (
+            (["all branches"], False, False),
+            (["all branches"], True, False),
+            (["all branches"], False, True),
+            (length_bin_groups[1:], False, False),
+            (length_bin_groups[1:], True, False),
+        ):
+            tp.tee(
+                gain_share_by_length,
+                data=sample_length_bins[
+                    sample_length_bins["sample"] == _sample
+                ],
+                groups=_groups,
+                relative=_relative,
+                log_axes=_log,
+                panel_layout=_layout,
+                teeplot_outattrs={
+                    "sample": _sample,
+                    "branches": (
+                        "all"
+                        if _groups == ["all branches"]
+                        else "by-clade-size"
+                    ),
+                    "y": "relative-to-neutral" if _relative else "share",
+                    "axes": "log" if _log else "linear",
+                },
+                teeplot_outexclude=[
+                    "groups",
+                    "relative",
+                    "log_axes",
+                    "panel_layout",
+                ],
+                teeplot_show=True,
+                teeplot_subdir=pathlib.Path(__file__).stem,
+            )
+            plt.close("all")
     return
 
 
