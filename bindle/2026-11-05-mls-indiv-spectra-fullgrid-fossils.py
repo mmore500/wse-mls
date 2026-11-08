@@ -825,16 +825,6 @@ def plot_density_distributions(cherry_distances, pe_counts, pendant_lengths):
 
 
 @app.cell(hide_code=True)
-def note_density():
-    mo.md(r"""
-    The kdtree sample is much denser locally.
-    It packs its genomes into about 55,000 PEs, about 72 per sampled PE, where the uniform sample spreads about 4.5 per PE over about 875,000 PEs.
-    Its leaves are more closely related: the median pendant branch is about 3.3 times shorter (about 500 vs. 1,700 `origin_time` units), and 81% of its cherries pair two genomes from the same PE (vs. 35%).
-    """)
-    return
-
-
-@app.cell(hide_code=True)
 def delimit_sample_mdcs():
     mo.md("""
     ## MDC Yield
@@ -931,16 +921,6 @@ def plot_sample_mdc_counts(
         tilt_xticklabels(_g)
         corner_xlabel(_g, right_legend(_g))
     plt.close("all")
-    return
-
-
-@app.cell(hide_code=True)
-def note_mdc_yield():
-    mo.md(r"""
-    Dense local sampling trades many separate gains for fewer, larger clades.
-    For neutral and `BENwg` sites, the kdtree sample has about 2.4 times fewer MDCs (e.g., about 2,850 vs. 6,900 per neutral site), but slightly more inner MDCs, and its MDCs average about 3 leaves (vs. 1.2).
-    For costly MLS and `DELbg` sites, it sees as many or somewhat fewer MDCs, but many more inner MDCs (e.g., about 300 vs. 30 for MLS at $s = 5\%$), as close relatives are sampled before carrier lineages are lost.
-    """)
     return
 
 
@@ -1139,24 +1119,6 @@ def plot_power_scatter(kind_order, kind_palette, sample_power):
             _g.set_titles(col_template="{col_name}")
             right_legend(_g)
         plt.close("all")
-    return
-
-
-@app.cell(hide_code=True)
-def note_power():
-    mo.md(r"""
-    ### Notes
-
-    - **MLS sites:** the kdtree sample gives more evidence that gain rate exceeds neutral sites'.
-      With calibrated pendant fits, whose neutral sites' statistics are near their null scale in both samples (mean neutral LRT about 1.6–1.7), $z$ rises from 6.0 to 10.0 at $s = 5\%$ and from 2.5 to 4.4 at $s = 2.5\%$; with calibrated allmdc fits, from 8.0 to 17.0 and from 4.7 to 9.3.
-      Its MLS gain ratio estimates are also closer to the configured ones (allmdc, calibrated: 1.78 vs. 1.54 at $s = 5\%$, configured 1.99; 68 vs. 42 at $s = 25\%$, configured 82.7), as gains are seen on short branches before between-host cost removes their carriers.
-    - **`BENwg` sites:** the kdtree sample gives less evidence (e.g., calibrated pendant $z$ 15.0 vs. 20.5 at $s = 5\%$), as these sites carry no cost, so the uniform sample's 2.4-fold more independent gains count for more.
-    - **Null calibration:** the allmdc statistics are overdispersed in the kdtree sample: its neutral sites' mean gain ratio LRT is 5.5 (calibrated) vs. 1.9 for the uniform sample, and one `DELbg` site reaches $z = 3.5$.
-      Denser sampling nests more branches, so the composite likelihood overstates the evidence more.
-      Scaled by the neutral mean, the kdtree's MLS advantage shrinks (e.g., $z_\mathrm{adj}$ 7.2 vs. 5.8 at $s = 5\%$) and its `BENwg` deficit grows (9.6 vs. 18.6); with four neutral sites, this scaling is rough.
-    - **Selection:** the kdtree sample gives less evidence of between-host cost, especially for pendant fits (e.g., MLS at $s = 5\%$: $z = -9.4$ vs. $-25.9$), as its short pendant branches leave little time for cost to act.
-    - So, k-d tree group sampling does sample local clusters densely, and that improves power to detect raised gain rates of costly (MLS) traits, but it costs power for cost-free (`BENwg`) traits and for detecting between-host cost, and allmdc's naive statistics need a null calibration to compare across samples.
-    """)
     return
 
 
