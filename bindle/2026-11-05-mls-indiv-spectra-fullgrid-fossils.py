@@ -529,7 +529,9 @@ def add_trait_transitions(phylo):
 def measure_sampling(phylo):
     """Per-PE sampled genome counts, pendant branch lengths, and the
     spatial distance between leaves of cherries (two-leaf clades)."""
-    _leaves = phylo[phylo["is_leaf"]]
+    # inner nodes have no PE, so row and col are float (with nan); leaves'
+    # are whole
+    _leaves = phylo.loc[phylo["is_leaf"]].astype({"row": int, "col": int})
     pe_counts = (
         _leaves.groupby(["row", "col"])
         .size()
