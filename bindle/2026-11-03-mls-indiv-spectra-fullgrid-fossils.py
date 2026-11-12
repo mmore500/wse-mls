@@ -1345,7 +1345,7 @@ def plot_mdc_tests(effect_size_order, kind_order, kind_palette, mdc_tests):
 def note_mdc_tests():
     mo.md(r"""
     MLS and `DELbg` MDCs are smaller and shorter-lived than neutral MDCs at every effect size, increasingly so with effect size.
-    At $s = 25\%$, nearly all of their MDCs are single leaves (23,714 of 23,767 for MLS, and 312 of 313 for `DELbg`).
+    At $s = 25\%$, nearly all of their MDCs are single leaves (23,912 of 23,965 for MLS, and 315 of 316 for `DELbg`).
     `BENwg` MDCs are about the size and duration of neutral MDCs at $s \leq 5\%$, but larger and longer-lived at $s = 25\%$ (probability of superiority about 0.53), so these tests detect a within-host advantage only at the largest effect size.
     """)
     return
@@ -2077,11 +2077,11 @@ def note_estimates():
     mo.md(r"""
     ### Notes
 
-    - With calibrated branch lengths, neutral and `BENwg` sites' selection estimates are near 0 (within about $5 \times 10^{-5}$ per `origin_time` unit), while MLS and `DELbg` sites' are negative, increasingly so with effect size: about $-3 \times 10^{-4}$ at $s = 1\%$, $-7 \times 10^{-4}$ at $2.5\%$, and $-1.4 \times 10^{-3}$ at $5\%$.
-    - At $s = 25\%$, MLS sites' selection estimate ($-4.5 \times 10^{-3}$) is less negative than `DELbg` sites' ($-6.7 \times 10^{-3}$); at smaller effect sizes the two are about equal.
-    - With raw branch lengths, neutral sites' selection estimates are about $-2 \times 10^{-4}$ rather than 0, and MLS and `DELbg` sites' are more negative than calibrated ones (about $-1 \times 10^{-2}$ and $-2 \times 10^{-2}$ at $s = 25\%$).
-    - Estimated gain ratios rise with configured within-host gain ratio for `BENwg` and MLS sites, but fall short of it: 59 and 42 at $s = 25\%$ (configured 82.7), about 1.6–1.7 at $5\%$ (1.99), about 1.2 at $2.5\%$ (1.39), and about 1 at $1\%$ (1.14).
-    - `DELbg` and neutral sites' gain ratios are near 1, except where few MDCs make them noisy (`DELbg` at $s = 25\%$, with 313 MDCs).
+    - With calibrated branch lengths, neutral and `BENwg` sites' selection estimates are near 0 (within about $5 \times 10^{-5}$ per `origin_time` unit), while MLS and `DELbg` sites' are negative, increasingly so with effect size: about $-3 \times 10^{-4}$ at $s = 1\%$, $-7 \times 10^{-4}$ at $2.5\%$, and $-1.5 \times 10^{-3}$ at $5\%$.
+    - At $s = 25\%$, MLS sites' selection estimate ($-3.6 \times 10^{-3}$) is less negative than `DELbg` sites' ($-7.2 \times 10^{-3}$); at smaller effect sizes the two are about equal.
+    - With raw branch lengths, neutral sites' selection estimates are about $-2 \times 10^{-4}$ rather than 0, and MLS and `DELbg` sites' are more negative than calibrated ones (about $-6 \times 10^{-3}$ and $-1.5 \times 10^{-2}$ at $s = 25\%$).
+    - Estimated gain ratios rise with configured within-host gain ratio for `BENwg` and MLS sites, but fall short of it: 59 and 34 at $s = 25\%$ (configured 82.7), about 1.6–1.7 at $5\%$ (1.99), about 1.2 at $2.5\%$ (1.39), and about 1 at $1\%$ (1.14).
+    - `DELbg` and neutral sites' gain ratios are near 1, except where few MDCs make them noisy (`DELbg` at $s = 25\%$, with 316 MDCs).
     - With estimated origin times, no branch had zero length; the chronological consistency step raised only a few hundred origin times, each by under 0.5.
     """)
     return
