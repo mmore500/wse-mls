@@ -1805,13 +1805,13 @@ def note_power():
     ### Notes
 
     - **MLS sites:** the kdtree sample gives more evidence that gain rate exceeds neutral sites'.
-      With calibrated pendant fits, whose neutral sites' statistics are near their null scale in both samples (mean neutral LRT about 1.6–1.7), $z$ rises from 6.0 to 10.0 at $s = 5\%$ and from 2.5 to 4.4 at $s = 2.5\%$; with calibrated allmdc fits, from 8.0 to 17.0 and from 4.7 to 9.3.
-      Its MLS gain ratio estimates are also closer to the configured ones (allmdc, calibrated: 1.78 vs. 1.54 at $s = 5\%$, configured 1.99; 68 vs. 42 at $s = 25\%$, configured 82.7), as gains are seen on short branches before between-host cost removes their carriers.
-    - **`BENwg` sites:** the kdtree sample gives less evidence (e.g., calibrated pendant $z$ 15.0 vs. 20.5 at $s = 5\%$), as these sites carry no cost, so the uniform sample's 2.4-fold more independent gains count for more.
-    - **Null calibration:** the allmdc statistics are overdispersed in the kdtree sample: its neutral sites' mean gain ratio LRT is 5.5 (calibrated) vs. 1.9 for the uniform sample, and one `DELbg` site reaches $z = 3.5$.
+      With calibrated pendant fits, whose neutral sites' statistics are near their null scale in both samples (mean neutral LRT about 1.5–2.0), $z$ rises from 6.2 to 10.0 at $s = 5\%$ and from 2.4 to 4.6 at $s = 2.5\%$; with calibrated allmdc fits, from 8.6 to 17.1 and from 5.7 to 9.7.
+      Its MLS gain ratio estimates are also closer to the configured ones (allmdc, calibrated: 1.75 vs. 1.55 at $s = 5\%$, configured 1.99; 66 vs. 33 at $s = 25\%$, configured 82.7), as gains are seen on short branches before between-host cost removes their carriers.
+    - **`BENwg` sites:** the kdtree sample gives less evidence (e.g., calibrated pendant $z$ 15.2 vs. 20.4 at $s = 5\%$), as these sites carry no cost, so the uniform sample's 2.4-fold more independent gains count for more.
+    - **Null calibration:** the allmdc statistics are overdispersed in the kdtree sample: its neutral sites' mean gain ratio LRT is 5.2 (calibrated) vs. 2.6 for the uniform sample, and one `DELbg` site reaches $z = 3.7$.
       Denser sampling nests more branches, so the composite likelihood overstates the evidence more.
-      Scaled by the neutral mean, the kdtree's MLS advantage shrinks (e.g., $z_\mathrm{adj}$ 7.2 vs. 5.8 at $s = 5\%$) and its `BENwg` deficit grows (9.6 vs. 18.6); with four neutral sites, this scaling is rough.
-    - **Selection:** the kdtree sample gives less evidence of between-host cost, especially for pendant fits (e.g., MLS at $s = 5\%$: $z = -9.4$ vs. $-25.9$), as its short pendant branches leave little time for cost to act.
+      Scaled by the neutral mean, the kdtree's MLS advantage shrinks (e.g., $z_\mathrm{adj}$ 7.5 vs. 5.3 at $s = 5\%$) and its `BENwg` deficit grows (10.1 vs. 16.1); with four neutral sites, this scaling is rough.
+    - **Selection:** the kdtree sample gives less evidence of between-host cost, especially for pendant fits (e.g., MLS at $s = 5\%$: $z = -8.9$ vs. $-26.1$), as its short pendant branches leave little time for cost to act.
     - So, k-d tree group sampling does sample local clusters densely, and that improves power to detect raised gain rates of costly (MLS) traits, but it costs power for cost-free (`BENwg`) traits and for detecting between-host cost, and allmdc's naive statistics need a null calibration to compare across samples.
     """)
     return

@@ -2073,7 +2073,7 @@ def note_estimates():
 
     - With calibrated branch lengths, neutral and `BENwg` sites' selection estimates are near 0, while MLS and `DELbg` sites' are negative, about $-1.5 \times 10^{-3}$ per `origin_time` unit at $s = 5\%$, falling roughly in proportion to effect size.
     - MLS and `DELbg` sites' estimates are about equal, so the between-host (transmission) cost dominates selection; the within-host advantage shows up in the gain ratio instead.
-    - With raw branch lengths, neutral and `BENwg` sites' selection estimates are about $-2 \times 10^{-4}$ rather than 0, and MLS and `DELbg` sites' are more negative than calibrated ones (about $-2.5$ to $-3.5 \times 10^{-3}$ at $s = 5\%$).
+    - With raw branch lengths, neutral and `BENwg` sites' selection estimates are about $-2 \times 10^{-4}$ rather than 0, and MLS and `DELbg` sites' are more negative than calibrated ones (about $-2.1$ to $-2.3 \times 10^{-3}$ at $s = 5\%$).
     - Estimated gain ratios rise with configured within-host gain ratio for `BENwg` and MLS sites, but fall short of it: about 1.5–1.8 at $s = 5\%$ (configured 1.99), about 1.2 at $s = 2.5\%$ (1.39), and about 1 at $s \leq 1\%$ (1.14 and 1.07).
     - `DELbg` and neutral sites' gain ratios are near 1, except where few MDCs make them noisy (e.g., `DELbg` at $s = 5\%$).
     """)
