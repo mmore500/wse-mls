@@ -5,7 +5,7 @@
 #     "matplotlib==3.10.9",
 #     "numpy==2.1.2",
 #     "pandas==2.2.3",
-#     "phyloframe[jit] @ git+https://github.com/mmore500/phyloframe.git@890559b39e4c1439ee5828b1c70d151cad402159",
+#     "phyloframe[jit]==0.19.0",
 #     "polars==1.36.1",
 #     "pyarrow==16.1.0",
 #     "requests==2.33.1",
@@ -52,8 +52,10 @@ with app.setup:
     ALPHA = 0.05
     # minimum gap enforced between a node's origin time and its parent's
     ORIGIN_TIME_EPSILON = 0.5
-    NUM_BOOTSTRAP = 0
-    SEED = 1
+    # calibration bins, per phyloframe's `alifestd_tgs_estimate_polars`
+    # documented example (all branches), and for leaf (pendant) branches
+    CALIBRATION_COLS = ["branch_length", "origin_time", "survival_duration"]
+    LEAF_CALIBRATION_COLS = ["branch_length", "origin_time"]
     # dark, middle, and light shades per site class; plots use the middle
     ETI_PALETTE = {
         "MLS": ["#004C7A", "#0072B2", "#8FC3E6"],
@@ -224,7 +226,7 @@ def describe_notebook():
     - **between-group deleterious** sites (`DELbg`) only reduce transmission, and
     - **within-group beneficial** sites (`BENwg`) are only favored within a host.
 
-    Each population member is a host, and each sample's trait gains are fit with `alifestd_tgs_allmdc_estimate_polars` (mutationally defined clades of every size) and `alifestd_tgs_pendantmdc_estimate_polars` (pendant branches only) from [mmore500/phyloframe#131](https://github.com/mmore500/phyloframe/pull/131), as in `2026-11-03-mls-indiv-spectra-fullgrid-fossils`.
+    Each population member is a host, and each sample's trait gains are fit with `alifestd_tgs_estimate_polars` from [phyloframe 0.19.0](https://github.com/mmore500/phyloframe/releases/tag/v0.19.0), over all branches (allmdc, mutationally defined clades of every size) and over pendant branches only (pendantmdc), as in `2026-11-03-mls-indiv-spectra-fullgrid-fossils`.
     Times are in `origin_time` units (two per generation).
     """)
     return
@@ -499,7 +501,9 @@ def prep_phylogeny(data_path):
 def add_trait_transitions(phylo):
     """Add each site's state transition on the branch into each node, from
     leaf states under parsimony without loss (a node has a trait if and
-    only if every leaf of its clade does). Returns the column names."""
+    only if every leaf of its clade does). Roots are the reconstruction's
+    placeholder ancestors, at the run start, so never carry a trait. Returns
+    the column names."""
     _is_leaf = phylo["is_leaf"].to_numpy()
     _anc = phylo["ancestor_id"].to_numpy()
     _is_root = phylo["is_root"].to_numpy()
@@ -518,6 +522,7 @@ def add_trait_transitions(phylo):
             )
         )
         _state = (_count == _num_leaves).astype(np.int8)
+        _state[_is_root] = 0
         _name = f"site{_site}"
         phylo[_name] = _state - np.where(_is_root, 0, _state[_anc])
         assert phylo[_name].isin([0, 1]).all(), "parsimony without loss"
@@ -584,227 +589,280 @@ def tabulate_sample_mdcs(phylo, trait_names):
 
 
 @app.function
-def fit_sample_estimates(phylo, trait_names, neutral_traits, batches):
-    """Fit allmdc and pendant estimators, raw and calibrated, per batch of
-    focal traits together with the neutral traits (to bound memory);
-    neutral traits' fits must agree across batches."""
-    _df = pl.from_pandas(
-        phylo[["id", "ancestor_id", "origin_time", *trait_names]],
-    )
-    _results = []
-    for _method, _fn in (
-        ("allmdc", pfl.alifestd_tgs_allmdc_estimate_polars),
-        ("pendantmdc", pfl.alifestd_tgs_pendantmdc_estimate_polars),
-    ):
-        for _calibrate in (False, True):
-            _start = time.time()
-            _fits = [
-                _fn(
-                    _df,
-                    trait_transitions=[*_batch, *neutral_traits],
-                    neutral_traits=neutral_traits,
-                    calibrate=_calibrate,
-                    num_bootstrap=NUM_BOOTSTRAP,
-                    seed=SEED,
-                ).to_pandas()
-                for _batch in batches
-            ]
-            _neutral_fits = [
-                _fit.set_index("trait").loc[
-                    neutral_traits, ["gain_rate", "selection"]
-                ]
-                for _fit in _fits
-            ]
-            for _other in _neutral_fits[1:]:
-                assert np.allclose(_neutral_fits[0], _other, rtol=1e-6)
-            print(
-                f"  {_method} calibrate={_calibrate}: "
-                f"{time.time() - _start:.0f}s",
-            )
-            _results.append(
-                pd.concat(
-                    [
-                        _fits[0][_fits[0]["trait"].isin(neutral_traits)],
-                        *(
-                            _fit[~_fit["trait"].isin(neutral_traits)]
-                            for _fit in _fits
-                        ),
-                    ],
-                    ignore_index=True,
-                ).assign(
-                    method=_method,
-                    calibration="calibrated" if _calibrate else "raw",
-                ),
-            )
-    return pd.concat(_results, ignore_index=True)
+def estimator_settings():
+    """Keyword arguments to `alifestd_tgs_estimate_polars`, per method and
+    branch length calibration.
+
+    Calibration follows the estimator's documented example: all-branch
+    (allmdc) fits calibrate within clade size classes, against neutral gains
+    in neighborhoods of joint quantile bins of branch length, origin time,
+    and survival duration; pendant (pendantmdc) fits calibrate leaf branches
+    by bins of branch length and origin time.
+    """
+    return {
+        ("allmdc", "raw"): {},
+        ("allmdc", "calibrated"): dict(
+            calibration_compare_by_bins="joint_quantile_bin",
+            calibration_compare_by_vals=[
+                f"{_col}_rank" for _col in CALIBRATION_COLS
+            ],
+            calibration_partition_by="clade_size_geom_class",
+        ),
+        ("pendantmdc", "raw"): dict(episode_mask="is_leaf"),
+        ("pendantmdc", "calibrated"): dict(
+            episode_mask="is_leaf",
+            calibration_compare_by_bins="leaf_quantile_bin",
+            calibration_compare_by_vals=[
+                f"{_col}_leaf_rank" for _col in LEAF_CALIBRATION_COLS
+            ],
+        ),
+    }
 
 
 @app.function
-def compute_fit_diagnostics(phylo, trait_names, neutral_traits, batches):
-    """Recompute the calibrated allmdc fit's per-partition expected gains,
-    with and without survival time, from the estimator's internals (see
-    `2026-11-01-mls-indiv-spectra-fullgrid-fossils`). Returns per-partition
-    diagnostics and per-trait fits."""
-    from phyloframe.legacy import _impl as pfl_impl
-    from scipy import sparse, special
-
-    _df = pl.from_pandas(
-        phylo[["id", "ancestor_id", "origin_time", *trait_names]],
-    )
-    _neutral = list(neutral_traits)
-    _settings = dict(
-        calibrate_neighborhood_fractions=(
-            0.005,
-            0.01,
-            0.025,
-            0.05,
-            0.1,
-            0.25,
-            0.5,
-            1.0,
-        ),
-        calibrate_num_partitions=4096,
-        calibrate_size_partition_ratio=2.0,
-        calibrate_size_partition_min_neutral_gains=20,
-    )
-    _batches = batches
-    _diagnostics, _fits = [], []
-    for _i, _batch in enumerate(_batches):
-        _names = [*_batch, *_neutral]
-        _neutral_idx = list(range(len(_batch), len(_names)))
-        _exposure = pfl_impl.tgs_prepare_polars(
-            _df, trait_transitions=_names, caller="calc_fit_diagnostics"
-        )
-        _partitioning = pfl_impl.tgs_partition_allmdc_exposures(
-            exposure_df=_exposure,
-            neutral_traits=_neutral_idx,
-            trait_names=_names,
-            calibrate=True,
-            **_settings,
-        )
-        _data, _shares = pfl_impl.tgs_calc_allmdc_data(
-            exposure_df=_exposure,
-            partitioning=_partitioning,
-            weights=np.ones(len(_exposure)),
-            neutral_traits=_neutral_idx,
-            calibrate=True,
-        )
-        # recover each row's partition: rows are trait-major, over
-        # partitions with branches that started without the trait
-        _units, _gains = pfl_impl.tgs_find_trait_exposures(_exposure)
-        _num_partitions = _partitioning["partitions"].max() + 1
-        _data["partition"] = np.concatenate(
-            [
-                np.flatnonzero(
-                    np.bincount(
-                        _partitioning["partitions"][_u],
-                        minlength=_num_partitions,
-                    )
-                    > 0
-                )
-                for _u in _units
+def mark_calibration_columns(phylo, trait_names, neutral_traits):
+    """The phylogeny as a polars dataframe, with the columns
+    `estimator_settings` calibrates by."""
+    # roots have no branch, so are not fitted
+    _is_fitted = pl.col("id") != pl.col("ancestor_id")
+    _is_fitted_leaf = _is_fitted & pl.col("is_leaf")
+    return (
+        pl.from_pandas(
+            phylo[
+                ["id", "ancestor_id", "origin_time", "is_leaf", *trait_names]
             ],
         )
-        # each partition lies within one size partition (by clade size)
-        _clade_sizes = _exposure["clade_size"].to_numpy()
-        _size_partitions = pfl_impl.tgs_calc_size_partitions(
-            clade_sizes=_clade_sizes,
-            neutral_gain_positions=np.concatenate(
-                [_gains[_r] for _r in _neutral_idx]
-            ),
-            calibrate=True,
-            calibrate_size_partition_ratio=2.0,
-            calibrate_size_partition_min_neutral_gains=20,
+        .pipe(
+            pfl.alifestd_mark_origin_time_delta_polars,
+            mark_as="branch_length",
         )
-        _size_of_partition = np.zeros(_num_partitions, dtype=int)
-        _size_of_partition[_partitioning["partitions"]] = _size_partitions
-        _labels = {
-            _sp: (f"{_lo}" if _lo == _hi else f"{_lo}–{_hi}")
-            for _sp in np.unique(_size_partitions)
-            for _lo, _hi in [
-                (
-                    _clade_sizes[_size_partitions == _sp].min(),
-                    _clade_sizes[_size_partitions == _sp].max(),
-                ),
-            ]
-        }
-        _data["size_partition"] = _size_of_partition[_data["partition"]]
-        _data["clade_size"] = _data["size_partition"].map(_labels)
-        del _exposure
-
-        _codes = _data["trait"].cat.codes.to_numpy()
-        _lengths = _data["length"].to_numpy()
-        _single = sparse.csr_matrix(np.ones((len(_data), 1)))
-        for _fit, (_fit_shares, _times) in {
-            "with survival time": (
-                _shares,
-                _partitioning["distinct_survival_times"],
-            ),
-            "without survival time": (_single, np.zeros(1)),
-        }.items():
-            _rows = []
-            for __, _part in _data.groupby("trait", observed=False):
-                _calc_nll, _scale = pfl_impl.tgs_make_allmdc_trait_nll(
-                    partitions=_part,
-                    survival_shares=_fit_shares[_part.index],
-                    distinct_survival_times=_times,
-                    growth_exponent_bound=600.0,
-                )
-                _rows.append(
-                    pfl_impl.tgs_fit_allmdc_trait(
-                        calc_nll=_calc_nll,
-                        selection_scale=_scale,
-                        partitions=_part,
-                        loss_rate=0.0,
-                        selection_starts=(0.0, -0.3, -1.8),
-                    ),
-                )
-            _fit_df = pd.DataFrame(_rows).assign(trait=_names, fit=_fit)
-            _fits.append(_fit_df.assign(batch=_i))
-            _g = _fit_df["gain_rate"].to_numpy()[_codes]
-            _c = _fit_df["selection"].to_numpy()[_codes]
-            # expected gain share per branch, averaging the survival term
-            # exactly over each partition's survival times
-            _effective = _lengths * special.exprel(
-                np.minimum(_c * _lengths, 600.0)
-            )
-            _sh = _fit_shares.tocsr()
-            _r = np.repeat(np.arange(_sh.shape[0]), np.diff(_sh.indptr))
-            _survival = np.bincount(
-                _r,
-                _sh.data
-                * np.exp(np.minimum(_c[_r] * _times[_sh.indices], 600.0)),
-                minlength=_sh.shape[0],
-            )
-            _data[f"expected {_fit}"] = (
-                _data["num_trials"] * _g * _effective * _survival
-            )
-        del _shares
-        _data["trait"] = np.asarray(_names)[_codes]
-        _keep = _data["trait"].isin(_batch) | (_i == 0)
-        _diagnostics.append(_data[_keep].drop(columns=["partition"]))
-    del _df
-    diagnostic_fits = pd.concat(_fits, ignore_index=True)
-    # neutral sites' fits must agree across calls
-    _neu = diagnostic_fits[diagnostic_fits["trait"].isin(_neutral)]
-    assert (
-        _neu.groupby(["trait", "fit"])["gain_rate"]
-        .agg(lambda x: np.ptp(x) <= 1e-6 * x.abs().max())
-        .all()
+        .pipe(
+            pfl.alifestd_mark_max_descendant_origin_time_polars,
+            mark_as="max_descendant_origin_time",
+        )
+        .with_columns(
+            survival_duration=pl.col("max_descendant_origin_time")
+            - pl.col("origin_time"),
+        )
+        .pipe(
+            pfl.alifestd_mark_clade_size_geom_classes_polars,
+            mark_as="clade_size_geom_class",
+            min_class_weight=20,
+            weight_by=neutral_traits,
+        )
+        .pipe(
+            pfl.alifestd_mark_joint_quantile_bins_polars,
+            bin_by=CALIBRATION_COLS,
+            mark_as="joint_quantile_bin",
+            partition_by="clade_size_geom_class",
+        )
+        .pipe(
+            pfl.alifestd_mark_joint_quantile_bins_polars,
+            bin_by=LEAF_CALIBRATION_COLS,
+            mark_as="leaf_quantile_bin",
+            partition_by="is_leaf",
+        )
+        .with_columns(
+            pl.when(_is_fitted)
+            .then(pl.col(CALIBRATION_COLS))
+            .rank()
+            .name.suffix("_rank"),
+            pl.when(_is_fitted_leaf)
+            .then(pl.col(LEAF_CALIBRATION_COLS))
+            .rank()
+            .name.suffix("_leaf_rank"),
+        )
     )
-    diagnostic_fits = diagnostic_fits.drop_duplicates(["trait", "fit"]).drop(
-        columns="batch"
+
+
+@app.function
+def fit_estimates(calibration_df, trait_names, neutral_traits):
+    """Fits every trait with each method and calibration of
+    `estimator_settings`; neutral traits are fit leave-one-out."""
+    _candidates = [_t for _t in trait_names if _t not in neutral_traits]
+    _results = []
+    for (_method, _calibration), _kwargs in estimator_settings().items():
+        _start = time.time()
+        _fit = pfl.alifestd_tgs_estimate_polars(
+            calibration_df,
+            trait_transitions_candidate=_candidates,
+            trait_transitions_neutral=neutral_traits,
+            **_kwargs,
+        )
+        print(f"{_method} {_calibration}: {time.time() - _start:.0f}s")
+        _results.append(
+            _fit.to_pandas().assign(method=_method, calibration=_calibration),
+        )
+    return pd.concat(_results, ignore_index=True).rename(
+        columns={
+            "trait_name": "trait",
+            "num_leaf_episodes": "num_leaves",
+            "num_leaf_gains": "num_trait_present",
+            "num_inner_episodes": "num_clades",
+            "num_inner_gains": "num_clade_gains",
+            "selection_coef": "selection",
+            "selection_coef_lrt_naive": "selection_lrt_naive",
+        },
+    )
+
+
+@app.function
+def compute_fit_diagnostics(
+    calibration_df, trait_names, neutral_traits, num_bins=200
+):
+    """Observed and expected trait gains under the calibrated allmdc fit,
+    with and without survival time, recomputed from the estimator's own
+    exposure episodes and calibrated episode durations.
+
+    Returns `diagnostic_fits`, each trait's fitted gain rate and selection,
+    and `fit_diagnostics`, branches grouped by trait, clade size class, and
+    calibrated length (`num_bins` quantile bins per trait and class).
+    """
+    from phyloframe.legacy import _impl as pfl_impl
+    from scipy import special
+
+    _settings = estimator_settings()[("allmdc", "calibrated")]
+    _candidates = [_t for _t in trait_names if _t not in neutral_traits]
+    _names = [*_candidates, *neutral_traits]
+    _neutral_ids = list(range(len(_candidates), len(_names)))
+    _exposure = pfl_impl.tgs_build_exposure_df_polars(
+        calibration_df,
+        trait_transitions=_names,
+        episode_mask=None,
+        **_settings,
+    )
+    _weights = np.ones(len(_exposure))
+    _neighborhoods = pfl_impl.tgs_select_calibration_neighborhoods(
+        _exposure,
+        neighborhood_fractions=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0),
+        neutral_trait_ids=_neutral_ids,
+    )
+    _fit_kwargs = dict(
+        weights=_weights,
+        num_traits=len(_names),
+        neutral_trait_ids=_neutral_ids,
+        calibration_neighborhoods=_neighborhoods,
+        nll_coarsegrain_rtol=1e-2,
+        loss_rate=0.0,
+        fit_selection_coef_starts=(0.0, -0.3, -1.8),
+        fit_growth_exponent_bound=600.0,
+        calc_lrts=False,
+        progress_wrap=lambda _x: _x,
+    )
+    # without survival time, the same model with every survival duration 0
+    _fits = {
+        "with survival time": pfl_impl.tgs_fit_traits(
+            _exposure, **_fit_kwargs
+        ),
+        "without survival time": pfl_impl.tgs_fit_traits(
+            _exposure.with_columns(survival_duration=pl.lit(0.0)),
+            **_fit_kwargs,
+        ),
+    }
+    diagnostic_fits = pd.concat(
+        [
+            _fit.to_pandas()
+            .rename(columns={"selection_coef": "selection"})
+            .assign(trait=_names, fit=_label)
+            for _label, _fit in _fits.items()
+        ],
+        ignore_index=True,
     )
     # reference gain rate: mean over neutral sites (other neutral sites,
     # for a neutral site), from the fit with survival time
     _with = diagnostic_fits[diagnostic_fits["fit"] == "with survival time"]
-    _neu_rates = _with.set_index("trait").loc[_neutral, "gain_rate"]
+    _neu_rates = _with.set_index("trait").loc[neutral_traits, "gain_rate"]
     diagnostic_fits["neutral_gain_rate"] = [
         _neu_rates.drop(_t, errors="ignore").mean()
         for _t in diagnostic_fits["trait"]
     ]
+
+    # clade size classes (calibration partitions), labeled by size range
+    _partitions = _exposure["partition_id"].to_numpy()
+    _clade_sizes = _exposure["clade_size"].to_numpy()
+    _num_partitions = _partitions.max() + 1
+    _size_lo = np.full(_num_partitions, np.iinfo(np.int64).max)
+    np.minimum.at(_size_lo, _partitions, _clade_sizes)
+    _size_hi = np.zeros(_num_partitions, dtype=np.int64)
+    np.maximum.at(_size_hi, _partitions, _clade_sizes)
+    _size_order = np.argsort(np.argsort(_size_lo))
+    _labels = np.array(
+        [
+            f"{_lo}" if _lo == _hi else f"{_lo}–{_hi}"
+            for _lo, _hi in zip(_size_lo, _size_hi)
+        ],
+    )
+
+    _bin_counts = pfl_impl.tgs_count_trait_exposures_binwise(
+        _exposure, trait_ids=_neutral_ids, weights=_weights
+    )
+    _durations = _exposure["episode_duration"].to_numpy()
+    _survival = _exposure["survival_duration"].to_numpy()
+    _bin_ids = _exposure["bin_id"].to_numpy()
+    _diagnostics = []
+    for _trait_id, _trait in enumerate(_names):
+        _starts = _exposure[
+            f"trait{_trait_id}_episode_starts_absent"
+        ].to_numpy()
+        _gained = ~_exposure[
+            f"trait{_trait_id}_episode_ends_absent"
+        ].to_numpy()
+        _factors = pfl_impl.tgs_calc_calibration_rescaling(
+            trait_bin_counts_df=_bin_counts,
+            trait_id=_trait_id,
+            neutral_trait_ids=_neutral_ids,
+            calibration_neighborhoods=_neighborhoods,
+        )
+        _length = (_durations * _factors[_bin_ids])[_starts]
+        _part = _partitions[_starts]
+        # quantile bins of calibrated length within each size class
+        _order = np.lexsort((_length, _part))
+        _rank = np.empty(len(_order), dtype=np.int64)
+        _rank[_order] = np.arange(len(_order))
+        _part_start = np.searchsorted(_part[_order], _part)
+        _part_count = np.bincount(_part, minlength=_num_partitions)[_part]
+        _fine = (_rank - _part_start) * num_bins // _part_count
+        _key = _part * num_bins + _fine
+        _num_keys = _num_partitions * num_bins
+        _columns = {
+            "num_trials": np.bincount(_key, minlength=_num_keys),
+            "num_successes": np.bincount(
+                _key, _gained[_starts].astype(float), minlength=_num_keys
+            ),
+            "length": np.bincount(_key, _length, minlength=_num_keys),
+        }
+        for _label, _fit in _fits.items():
+            _g = _fit["gain_rate"][_trait_id]
+            _c = _fit["selection_coef"][_trait_id]
+            if not _g > 0:
+                _c = 0.0
+            _effective = _length * special.exprel(
+                np.minimum(_c * _length, 600.0)
+            )
+            _growth = np.exp(
+                np.minimum(
+                    _c
+                    * (
+                        _survival[_starts]
+                        if _label == "with survival time"
+                        else 0.0
+                    ),
+                    600.0,
+                ),
+            )
+            _columns[f"expected {_label}"] = np.bincount(
+                _key, _g * _effective * _growth, minlength=_num_keys
+            )
+        _df = pd.DataFrame(_columns).assign(
+            trait=_trait,
+            size_partition=np.repeat(_size_order, num_bins),
+            clade_size=np.repeat(_labels, num_bins),
+        )
+        _df = _df[_df["num_trials"] > 0].copy()
+        _df["length"] /= _df["num_trials"]
+        _diagnostics.append(_df)
     fit_diagnostics = pd.concat(_diagnostics, ignore_index=True)
-    return fit_diagnostics, diagnostic_fits
+    return diagnostic_fits, fit_diagnostics
 
 
 @app.function
@@ -931,7 +989,7 @@ def obs_exp_by_size(data, sizes, panel_layout):
 
 @app.function
 def bin_by_length(fit_diagnostics, diagnostic_fits):
-    """Bin each trait's partitions by calibrated length, for all branches
+    """Bin each trait's branches by calibrated length, for all branches
     and for each of the first three clade size groups."""
     _num_bins = 20
     _sizes = (
@@ -1143,9 +1201,9 @@ def delimit_analyze():
 
     1. Fossil layer 0 (the initial population, at `origin_time == -1`) is dropped, lineages without retained leaves are pruned, and unifurcations collapsed.
     2. Origin times are raised to at least the parent's plus {ORIGIN_TIME_EPSILON}, so every branch has positive length.
-    3. Each site's trait state at every node is reconstructed under parsimony without loss: a node has a trait if and only if every leaf of its clade does.
-    4. The allmdc and pendant estimators are fit with raw and with neutral-calibrated branch lengths.
-    5. The calibrated allmdc fit's expected gains are recomputed per partition, with and without survival time, for fit diagnostics.
+    3. Each site's trait state at every node is reconstructed under parsimony without loss: a node has a trait if and only if every leaf of its clade does, except roots (the reconstruction's placeholder ancestors at the run start), which never carry a trait.
+    4. The allmdc and pendant estimators are fit with raw and with neutral-calibrated branch lengths (calibrated per the estimator's documented example).
+    5. The calibrated allmdc fit's expected gains are recomputed per exposure episode, with and without survival time, for fit diagnostics.
     """)
     return
 
@@ -1155,11 +1213,6 @@ def analyze_samples(neutral_sites, site_info):
     import gc
 
     _neutral = [f"site{_site}" for _site in neutral_sites]
-    _batches = [
-        _part["trait"].tolist()
-        for _kind, _part in site_info.groupby("kind", sort=False)
-        if not _kind.startswith("NEU")
-    ]
     _summaries, _pes, _pendants, _cherries, _mdcs, _estimates = (
         [],
         [],
@@ -1184,14 +1237,17 @@ def analyze_samples(neutral_sites, site_info):
         _mdcs.append(
             tabulate_sample_mdcs(_phylo, _names).assign(sample=_sample)
         )
+        _calibration_df = mark_calibration_columns(_phylo, _names, _neutral)
+        del _phylo
+        gc.collect()
         _estimates.append(
-            fit_sample_estimates(_phylo, _names, _neutral, _batches).assign(
+            fit_estimates(_calibration_df, _names, _neutral).assign(
                 sample=_sample
             )
         )
         _start_diag = time.time()
-        _diag, _dfits = compute_fit_diagnostics(
-            _phylo, _names, _neutral, _batches
+        _dfits, _diag = compute_fit_diagnostics(
+            _calibration_df, _names, _neutral
         )
         _sample_bins, length_bin_groups = bin_by_length(_diag, _dfits)
         _bins.append(_sample_bins.assign(sample=_sample))
@@ -1210,7 +1266,7 @@ def analyze_samples(neutral_sites, site_info):
             .assign(sample=_sample)
         )
         print(f"  fit diagnostics: {time.time() - _start_diag:.0f}s")
-        del _phylo, _diag
+        del _calibration_df, _diag
         gc.collect()
         print(f"  total {time.time() - _start:.0f}s")
     sample_summary = pd.DataFrame(_summaries).set_index("sample").T
@@ -1673,9 +1729,9 @@ def delimit_fit_diagnostics():
     mo.md("""
     ## Fit Diagnostics
 
-    Per sample, observed trait gains compared with those expected under the calibrated allmdc fit, recomputed from the estimator's own branch partitions, calibrated branch lengths, and survival times (as in `2026-11-03-mls-indiv-spectra-fullgrid-fossils`).
+    Per sample, observed trait gains compared with those expected under the calibrated allmdc fit, recomputed from the estimator's own exposure episodes, calibrated branch lengths, and survival times (as in `2026-11-03-mls-indiv-spectra-fullgrid-fossils`).
     Two fits are compared: **with survival time** (the allmdc model) and **without survival time** (refit with every branch's survival time set to 0).
-    Branches whose parent lacks a trait are grouped by clade size and binned by calibrated branch length, into bins of equal total length.
+    Branches whose parent lacks a trait are grouped by clade size class and binned by calibrated branch length, into bins of equal total length.
     For reference, the neutral expectation is the mean neutral gain rate (for a neutral site, the other three's) times calibrated length, and the trait's own expectation is its fitted gain rate times calibrated length.
     Error bars are 95% Poisson intervals.
     """)
